@@ -248,12 +248,6 @@
     cursor: grab;
 }
 
-.vc-splitview-tab:only-child {
-    flex: 1 1 auto;
-    min-width: 0;
-    max-width: 100%;
-}
-
 .vc-splitview-tab:hover {
     color: var(--vc-splitview-text-primary);
     background: var(--background-modifier-hover);
