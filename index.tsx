@@ -16,7 +16,7 @@ import { syncLiveMessages } from "./discord/messages";
 import { getChannelDragProps } from "./drag/DragManager";
 import { logger } from "./logger";
 import { settings } from "./settings";
-import { closeAllPanes, equalizeViewSizes, flushLayoutPersistence, flushStagedDrafts, getLayoutState, initializeLayout, openChannel, pruneUnavailableChannels } from "./state/layoutStore";
+import { closeAllPanes, equalizeViewSizes, flushLayoutPersistence, flushStagedDrafts, getLayoutState, initializeLayout, openChannel, openPrimaryTab, pruneUnavailableChannels, syncPrimaryChannel } from "./state/layoutStore";
 import { clearMessageViewportStates } from "./state/messageViewportStore";
 import managedStyle from "./styles.css?managed";
 
@@ -35,15 +35,23 @@ function openChannelInSplit(channel: Channel | undefined): void {
     }
 }
 
-function makeOpenMenuItem(channel: Channel) {
-    return (
+function makeOpenMenuItems(channel: Channel) {
+    return [
         <Menu.MenuItem
             key="vc-splitview-open"
             id="vc-splitview-open"
             label="Open in Split View"
             action={() => openChannelInSplit(channel)}
+        />,
+        <Menu.MenuItem
+            key="vc-splitview-open-primary-tab"
+            id="vc-splitview-open-primary-tab"
+            label="Open in Main Chat Tab"
+            action={() => {
+                if (!openPrimaryTab(channel.id)) showToast("SplitView has reached its main chat tab capacity.", Toasts.Type.FAILURE);
+            }}
         />
-    );
+    ];
 }
 
 function insertOpenMenuItem(children: Parameters<NavContextMenuPatchCallback>[0], channel: Channel | undefined, anchors: string[]) {
@@ -51,12 +59,12 @@ function insertOpenMenuItem(children: Parameters<NavContextMenuPatchCallback>[0]
 
     const group = findGroupChildrenByChildId(anchors, children);
     if (!group) {
-        children.splice(-1, 0, <Menu.MenuGroup>{makeOpenMenuItem(channel)}</Menu.MenuGroup>);
+        children.splice(-1, 0, <Menu.MenuGroup>{makeOpenMenuItems(channel)}</Menu.MenuGroup>);
         return;
     }
 
     const closeActionIndex = group.findIndex(item => anchors.includes(item?.props?.id));
-    group.splice(closeActionIndex < 0 ? group.length : closeActionIndex, 0, makeOpenMenuItem(channel));
+    group.splice(closeActionIndex < 0 ? group.length : closeActionIndex, 0, ...makeOpenMenuItems(channel));
 }
 
 const patchChannelContextMenu: NavContextMenuPatchCallback = (children, props) => {
@@ -135,6 +143,11 @@ export default definePlugin({
     },
 
     flux: {
+        CHANNEL_SELECT() {
+            // Read SelectedChannelStore after Discord has processed navigation.
+            // This also avoids replaying intermediate routes during rapid switches.
+            queueMicrotask(syncPrimaryChannel);
+        },
         PASSIVE_UPDATE_V2({ channels }: { channels: Array<{ id: string; lastMessageId?: string | null; }>; }) {
             for (const { id: channelId, lastMessageId } of channels) {
                 if (!lastMessageId || !isSplitViewChannel(channelId)) continue;

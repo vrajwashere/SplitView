@@ -33,8 +33,9 @@ In narrow panes, tab names truncate to keep the header tidy. Use the scroll arro
 | `Ctrl` + `Shift` + `Arrow key` | Move composer focus to the pane in that direction. |
 | `Ctrl` + `Alt` + `1`–`4` | Focus a pane by position. `1` is the primary chat; split panes follow in visual order. |
 | `Ctrl` + `Alt` + `0` | Resize all views, including the primary chat, to equal shares of the workspace. |
-| `Ctrl` + `Left Arrow` | Select the previous tab in the focused split pane. |
-| `Ctrl` + `Right Arrow` | Select the next tab in the focused split pane. |
+| `Ctrl` + `Left Arrow` / `Right Arrow` | Select the previous / next tab in the focused pane, including the original chat. |
+
+Main-chat tabs use Discord's native channel navigation. Ctrl+Arrow switches tabs while focus is inside a pane with multiple tabs; outside the panes it leaves Discord's shortcuts unchanged. Alt+Arrow retains Discord's normal history navigation.
 
 Equalizing keeps the current arrangement and focused pane. Columns become equal widths, rows become equal heights, and mixed layouts get equal areas. You can also select **Equalize view sizes (Ctrl+Alt+0)** in the Vencord toolbox. The new sizes are saved when **Remember Layout** is enabled.
 

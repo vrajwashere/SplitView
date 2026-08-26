@@ -19,6 +19,13 @@ export interface SplitPaneRecord {
     activeTabId: string;
 }
 
+export interface PrimaryPaneRecord {
+    tabs: PaneTab[];
+    activeTabId: string | null;
+    /** Normal navigation replaces only this unsaved tab. */
+    previewTabId: string | null;
+}
+
 export type LayoutNode = {
     type: "primary";
 } | {
@@ -33,9 +40,10 @@ export type LayoutNode = {
 };
 
 export interface PersistedSplitState {
-    version: 2;
+    version: 3;
     layout: LayoutNode;
     panes: Record<string, SplitPaneRecord>;
+    primary: PrimaryPaneRecord;
     activePaneId: string | null;
     drafts: Record<string, string>;
 }

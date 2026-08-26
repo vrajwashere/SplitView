@@ -10,10 +10,11 @@ import type { CSSProperties, FocusEventHandler, PointerEventHandler, ReactElemen
 
 import { DragLayer, registerDragWorkspace } from "../drag/DragManager";
 import { WorkspaceDragLayer } from "../drag/WorkspaceDrag";
-import { ComposerShortcuts } from "../keyboard/ComposerFocusManager";
-import { setActivePane, setSplitRatio, useWorkspaceLayout } from "../state/layoutStore";
+import { ComposerShortcuts, rememberPrimaryComposer, usePaneFocusRef } from "../keyboard/ComposerFocusManager";
+import { closeTab, getPaneState, setActivePane, setSplitRatio, useWorkspaceLayout } from "../state/layoutStore";
 import type { LayoutNode } from "../state/types";
 import { Divider, type LayoutRect } from "./Divider";
+import { StablePaneTabs } from "./PaneTabs";
 import { StableSplitPane } from "./SplitPane";
 
 interface PanePlacement {
@@ -117,6 +118,7 @@ export function SplitWorkspace({ primary }: { primary: ReactElement<PrimaryChatP
     const { activePaneId, layout } = useWorkspaceLayout();
     const hostRef = React.useRef<HTMLDivElement>(null);
     const workspaceRef = React.useRef<HTMLDivElement>(null);
+    const primaryFocusRef = usePaneFocusRef(null);
     const [ratioPreview, setRatioPreview] = React.useState<RatioPreview | null>(null);
     const committedGeometry = React.useMemo(() => calculateLayoutGeometry(layout, null), [layout]);
     const geometry = React.useMemo(
@@ -169,6 +171,7 @@ export function SplitWorkspace({ primary }: { primary: ReactElement<PrimaryChatP
         className: [primary.props.className, "vc-splitview-primary"].filter(Boolean).join(" "),
         onFocusCapture(event) {
             primary.props.onFocusCapture?.(event);
+            rememberPrimaryComposer(event.target);
             setActivePane(null);
         },
         onPointerDownCapture(event) {
@@ -183,7 +186,28 @@ export function SplitWorkspace({ primary }: { primary: ReactElement<PrimaryChatP
             className={`vc-splitview-host${active ? " vc-splitview-host-active" : ""}${ratioPreview ? " vc-splitview-host-resizing" : ""}`}
             style={hostStyle}
         >
-            {primaryChat}
+            <div
+                ref={primaryFocusRef}
+                className="vc-splitview-primary-slot"
+                tabIndex={-1}
+                onFocusCapture={() => setActivePane(null)}
+                onPointerDownCapture={() => setActivePane(null)}
+                onKeyDown={event => {
+                    if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+                    const pane = getPaneState(null);
+                    if (!pane.activeTabId) return;
+                    if (event.key.toLowerCase() === "w") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closeTab(null, pane.activeTabId);
+                    }
+                }}
+            >
+                <ErrorBoundary message="SplitView could not render main chat tabs.">
+                    <StablePaneTabs paneId={null} />
+                </ErrorBoundary>
+                {primaryChat}
+            </div>
             <ComposerShortcuts geometry={geometry} />
             <DragLayer />
             <WorkspaceDragLayer hostRef={hostRef} geometry={geometry} />

@@ -5,6 +5,15 @@
  */
 
 .vc-splitview-host {
+    --vc-splitview-text-primary: var(--text-default);
+    --vc-splitview-text-secondary: var(--text-muted);
+    --vc-splitview-input-background: var(--input-background-default, var(--channeltextarea-background));
+    --vc-splitview-input-border: var(--input-border-default, var(--border-subtle));
+    --vc-splitview-border: var(--border-subtle, var(--background-modifier-accent));
+    --vc-splitview-header-action: var(--vc-splitview-native-header-action-color, var(--text-default));
+    --vc-splitview-surface: var(--background-base-lower, var(--background-primary));
+    --vc-splitview-surface-raised: var(--background-base-low, var(--background-secondary));
+
     position: relative;
     display: flex;
     flex: 1 1 auto;
@@ -15,7 +24,22 @@
     overflow: hidden;
 }
 
-.vc-splitview-host-active > .vc-splitview-primary {
+.vc-splitview-primary-slot {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.vc-splitview-primary-slot > .vc-splitview-primary {
+    flex: 1 1 0;
+    width: 100%;
+    min-height: 0;
+}
+
+.vc-splitview-host-active > .vc-splitview-primary-slot {
     position: absolute !important;
     z-index: 0;
     inset: var(--vc-splitview-primary-top, 0) auto auto var(--vc-splitview-primary-left, 0) !important;
@@ -28,7 +52,7 @@
     transform-origin: top left;
 }
 
-.vc-splitview-host-resizing > .vc-splitview-primary {
+.vc-splitview-host-resizing > .vc-splitview-primary-slot {
     will-change: transform;
 }
 
@@ -49,16 +73,6 @@
 }
 
 .vc-splitview-secondary-root {
-    --vc-splitview-text-primary: var(--text-default);
-    --vc-splitview-text-secondary: var(--text-muted);
-    --vc-splitview-interactive: var(--interactive-normal, var(--interactive-hover));
-    --vc-splitview-input-background: var(--input-background-default, var(--channeltextarea-background));
-    --vc-splitview-input-border: var(--input-border-default, var(--border-subtle));
-    --vc-splitview-border: var(--border-subtle, var(--background-modifier-accent));
-    --vc-splitview-header-action: var(--vc-splitview-native-header-action-color, var(--text-default));
-    --vc-splitview-surface: var(--background-base-lower, var(--background-primary));
-    --vc-splitview-surface-raised: var(--background-base-low, var(--background-secondary));
-
     position: absolute;
     z-index: 1;
     inset: 0;
@@ -119,6 +133,10 @@
     background-repeat: var(--vc-splitview-native-header-background-repeat, initial);
     background-size: var(--vc-splitview-native-header-background-size, initial);
     box-shadow: var(--vc-splitview-native-header-box-shadow, var(--elevation-low));
+}
+
+.vc-splitview-primary-slot > .vc-splitview-tabbar {
+    background-color: var(--background-base-low, var(--background-secondary));
 }
 
 .vc-splitview-tab-navigation {
@@ -234,7 +252,7 @@
 }
 
 .vc-splitview-tab:hover {
-    color: var(--vc-splitview-interactive);
+    color: var(--vc-splitview-text-primary);
     background: var(--background-modifier-hover);
 }
 
@@ -286,6 +304,10 @@
     white-space: nowrap;
 }
 
+.vc-splitview-tab-preview .vc-splitview-tab-title {
+    font-style: italic;
+}
+
 .vc-splitview-tab-close {
     display: grid;
     flex: 0 0 20px;
@@ -299,6 +321,10 @@
     color: var(--vc-splitview-text-primary);
     background: transparent;
     cursor: pointer;
+}
+
+.vc-splitview-tab-close:disabled {
+    visibility: hidden;
 }
 
 .vc-splitview-tab-close:hover {
@@ -343,7 +369,8 @@
     height: 20px;
 }
 
-.vc-splitview-open-primary-button {
+.vc-splitview-open-primary-button,
+.vc-splitview-keep-tab-button {
     display: grid;
     flex: 0 0 32px;
     place-items: center;
@@ -358,12 +385,24 @@
     cursor: pointer;
 }
 
-.vc-splitview-open-primary-button svg {
+.vc-splitview-open-primary-button svg,
+.vc-splitview-keep-tab-button svg {
     width: 20px;
     height: 20px;
 }
 
-.vc-splitview-open-primary-button:hover {
+.vc-splitview-keep-tab-button:disabled {
+    color: var(--vc-splitview-text-secondary);
+    cursor: default;
+}
+
+.vc-splitview-keep-tab-button:focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: -2px;
+}
+
+.vc-splitview-open-primary-button:hover,
+.vc-splitview-keep-tab-button:enabled:hover {
     color: var(--vc-splitview-text-primary);
     background: var(--background-modifier-hover);
 }
@@ -715,11 +754,12 @@
 }
 
 .vc-splitview-composer textarea {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     box-sizing: border-box;
+    field-sizing: content;
     min-width: 0;
     min-height: 38px;
-    height: 38px;
+    height: auto;
     max-height: 160px;
     overflow: hidden auto;
     scrollbar-width: none;

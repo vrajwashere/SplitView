@@ -10,7 +10,7 @@ import type { CSSProperties, DOMAttributes } from "react";
 
 import { getChannelHeaderDetails, isChannelAvailable } from "../discord/channel";
 import { settings } from "../settings";
-import { getLayoutState, MAXIMUM_TABS_PER_PANE, openChannelInPane, splitChannel } from "../state/layoutStore";
+import { canOpenPrimaryTab, getLayoutState, MAXIMUM_TABS_PER_PANE, openChannelInPane, splitChannel } from "../state/layoutStore";
 import type { SplitPlacement } from "../state/types";
 
 const DRAG_THRESHOLD = 8;
@@ -39,7 +39,7 @@ interface ScreenRect {
 
 type DropAction = {
     kind: "tab";
-    paneId: string;
+    paneId: string | null;
     rect: ScreenRect;
 } | {
     kind: "split";
@@ -139,17 +139,6 @@ function getDropAction(x: number, y: number): DropAction | undefined {
     const paneCount = Object.keys(state.panes).length;
     const primary = normalizedToScreen(workspace.geometry.primary, workspace.rect);
 
-    if (!paneCount) {
-        const targetWidth = Math.min(320, Math.max(180, primary.width * 0.36));
-        if (x < primary.right - targetWidth || x > primary.right || y < primary.top || y > primary.bottom) return;
-        return {
-            kind: "split",
-            placement: "right",
-            rect: splitPreview(primary, "right"),
-            targetPaneId: null
-        };
-    }
-
     const leaves = [
         { paneId: null, rect: primary },
         ...workspace.geometry.panes.map(pane => ({
@@ -159,6 +148,15 @@ function getDropAction(x: number, y: number): DropAction | undefined {
     ];
     const leaf = leaves.find(candidate => containsPoint(candidate.rect, x, y));
     if (!leaf) return;
+
+    // Headers always accept tabs, even though they overlap a pane's top edge.
+    const header = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-vc-splitview-tabbar]");
+    const overTabBar = header?.dataset.vcSplitviewTabbar === (leaf.paneId ?? "primary");
+    const canAddTab = leaf.paneId == null
+        ? dragState != null && canOpenPrimaryTab(dragState.channel.id)
+        : state.panes[leaf.paneId]?.tabs.length < MAXIMUM_TABS_PER_PANE
+            || state.panes[leaf.paneId]?.tabs.some(tab => tab.channelId === dragState?.channel.id);
+    if (overTabBar) return canAddTab ? { kind: "tab", paneId: leaf.paneId, rect: leaf.rect } : undefined;
 
     const canAddPane = paneCount < Math.max(1, settings.store.maximumPaneCount - 1);
     const placement = canAddPane ? closestEdge(leaf.rect, x, y) : undefined;
@@ -170,7 +168,7 @@ function getDropAction(x: number, y: number): DropAction | undefined {
             targetPaneId: leaf.paneId
         };
     }
-    if (leaf.paneId && state.panes[leaf.paneId]?.tabs.length < MAXIMUM_TABS_PER_PANE) {
+    if (canAddTab) {
         return { kind: "tab", paneId: leaf.paneId, rect: leaf.rect };
     }
 }
@@ -308,10 +306,10 @@ export function DragLayer() {
                         <SplitIcon horizontal={horizontal} />
                     </div>
                     <div className="vc-splitview-drop-target-title">
-                        {action.kind === "tab" ? "Open as a tab" : `Split ${action.placement}`}
+                        {action.kind === "tab" ? action.paneId == null ? "Add to main chat tabs" : "Open as a tab" : `Split ${action.placement}`}
                     </div>
                     <div className="vc-splitview-drop-target-hint">
-                        {action.kind === "tab" ? "Release in this pane" : "Release to create a new view"}
+                        {action.kind === "tab" ? action.paneId == null ? "Keeps your current tab and opens this channel in Discord" : "Release in this pane" : "Release to create a new view"}
                     </div>
                 </div>
             )}

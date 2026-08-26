@@ -7,17 +7,17 @@
 import { React, ReactDOM } from "@webpack/common";
 import type { DragEvent as ReactDragEvent, RefObject } from "react";
 
-import { focusSplitComposer } from "../keyboard/ComposerFocusManager";
-import { canMoveTab, getLayoutState, moveTab, swapPanePositions } from "../state/layoutStore";
+import { focusPrimaryComposer, focusSplitComposer } from "../keyboard/ComposerFocusManager";
+import { canMoveTab, getLayoutState, getPaneState, moveTab, swapPanePositions } from "../state/layoutStore";
 import type { DragWorkspaceGeometry } from "./DragManager";
 
 const WORKSPACE_DRAG_TYPE = "application/x-vencord-splitview-workspace";
 
-type DragSource = { kind: "tab"; paneId: string; tabId: string; } | { kind: "pane"; paneId: string; };
+type DragSource = { kind: "tab"; paneId: string | null; tabId: string; } | { kind: "pane"; paneId: string | null; };
 type PreviewRect = Pick<DOMRect, "height" | "left" | "top" | "width">;
 type DropTarget = {
     kind: "tab";
-    paneId: string;
+    paneId: string | null;
     tabId?: string;
     placement: "before" | "after";
     rect: PreviewRect;
@@ -55,8 +55,7 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
         let focusFrame: number | undefined;
 
         function getDropTarget(event: globalThis.DragEvent, source: DragSource): DropTarget | null {
-            const state = getLayoutState();
-            const sourcePane = state.panes[source.paneId];
+            const sourcePane = getPaneState(source.paneId);
             if (!sourcePane || (source.kind === "tab" && !sourcePane.tabs.some(tab => tab.id === source.tabId))) return null;
             const workspace = host!.getBoundingClientRect();
             const currentGeometry = geometryRef.current;
@@ -75,13 +74,13 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
             if (source.kind === "pane") {
                 return leaf.paneId === source.paneId ? null : { kind: "pane", ...leaf };
             }
-            if (leaf.paneId == null || !canMoveTab(leaf.paneId, source.tabId)) return null;
+            if (!canMoveTab(leaf.paneId, source.tabId)) return null;
 
             const targetElement = event.target instanceof Element
                 ? event.target.closest<HTMLElement>("[data-vc-splitview-tab-id]")
                 : null;
             const tabId = targetElement?.dataset.vcSplitviewTabId;
-            if (tabId && state.panes[leaf.paneId]?.tabs.some(tab => tab.id === tabId)) {
+            if (tabId && getPaneState(leaf.paneId)?.tabs.some(tab => tab.id === tabId)) {
                 if (tabId === source.tabId) return null;
                 const rect = targetElement!.getBoundingClientRect();
                 const placement = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
@@ -124,12 +123,18 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
             const paneId = source.kind === "pane" ? source.paneId : target.paneId;
             if (focusFrame != null) cancelAnimationFrame(focusFrame);
             focusFrame = requestAnimationFrame(() => {
-                if (paneId != null && getLayoutState().activePaneId === paneId) focusSplitComposer(paneId);
+                if (getLayoutState().activePaneId !== paneId) return;
+                if (paneId == null) focusPrimaryComposer();
+                else focusSplitComposer(paneId);
             });
         }
 
         function onDragLeave(event: globalThis.DragEvent): void {
             if (!(event.relatedTarget instanceof Node) || !host!.contains(event.relatedTarget)) setPreview(null);
+        }
+
+        function onKeyDown(event: globalThis.KeyboardEvent): void {
+            if (event.key === "Escape" && dragSource) clearDrag();
         }
 
         host.addEventListener("dragover", onDragOver, true);
@@ -138,6 +143,7 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
         window.addEventListener("dragend", clearDrag);
         window.addEventListener("drop", clearDrag);
         window.addEventListener("blur", clearDrag);
+        window.addEventListener("keydown", onKeyDown, true);
         return () => {
             dragSource = null;
             if (focusFrame != null) cancelAnimationFrame(focusFrame);
@@ -147,6 +153,7 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
             window.removeEventListener("dragend", clearDrag);
             window.removeEventListener("drop", clearDrag);
             window.removeEventListener("blur", clearDrag);
+            window.removeEventListener("keydown", onKeyDown, true);
         };
     }, [hostRef]);
 
@@ -158,10 +165,10 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
             ) : (
                 <div className="vc-splitview-drop-target vc-splitview-drop-target-active" style={preview.rect}>
                     <div className="vc-splitview-drop-target-title">
-                        {preview.kind === "pane" ? "Swap view positions" : "Move tab here"}
+                        {preview.kind === "pane" ? "Swap view positions" : preview.paneId == null ? "Move to main chat tabs" : "Move tab here"}
                     </div>
                     <div className="vc-splitview-drop-target-hint">
-                        {preview.kind === "pane" ? "All tabs stay with their pane" : "Release to add at the end of this pane's tabs"}
+                        {preview.kind === "pane" ? "All tabs stay with their pane" : preview.paneId == null ? "Uses Discord's native navigation" : "Release to add at the end of this pane's tabs"}
                     </div>
                 </div>
             )}

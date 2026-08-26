@@ -19,13 +19,6 @@ import { commitStagedDraft, getDraft, setActivePane, setDraft, stageDraft } from
 
 const DRAFT_SYNC_DELAY_MS = 250;
 
-function resizeTextarea(textarea: HTMLTextAreaElement): void {
-    // Reset first so deleting text and widening a pane also shrink the input.
-    // CSS caps the height; longer drafts remain scrollable without a scrollbar.
-    textarea.style.height = "0px";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-}
-
 function restoreTextareaFocus(textarea: HTMLTextAreaElement | null): void {
     // Discord may focus its native composer after SEND_MESSAGE finishes. Waiting
     // for two paint frames lets that work settle before restoring this pane's
@@ -49,6 +42,7 @@ export function SplitComposer() {
     const [editContent, setEditContent] = useState("");
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState<string>();
+    const [fileInputVersion, setFileInputVersion] = useState(0);
     const availability = useStateFromStores(
         [ChannelStore, PermissionStore],
         () => getSendAvailability(getChannel(channelId)),
@@ -94,25 +88,6 @@ export function SplitComposer() {
     }, [paneId]);
 
     draftRef.current = draft;
-
-    useLayoutEffect(() => {
-        if (textareaRef.current) resizeTextarea(textareaRef.current);
-    }, [value]);
-
-    useLayoutEffect(() => {
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-
-        let previousWidth = textarea.clientWidth;
-        const observer = new ResizeObserver(() => {
-            const width = textarea.clientWidth;
-            if (width === previousWidth) return;
-            previousWidth = width;
-            resizeTextarea(textarea);
-        });
-        observer.observe(textarea);
-        return () => observer.disconnect();
-    }, []);
 
     useEffect(() => {
         const timer = setTimeout(() => commitStagedDraft(channelId), DRAFT_SYNC_DELAY_MS);
@@ -198,7 +173,8 @@ export function SplitComposer() {
 
     function onFileInputChange(event: ChangeEvent<HTMLInputElement>): void {
         attachFiles(Array.from(event.currentTarget.files ?? []));
-        event.currentTarget.value = "";
+        // Let React reset the input so the same file can be selected again.
+        setFileInputVersion(version => version + 1);
     }
 
     function onPaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
@@ -287,6 +263,7 @@ export function SplitComposer() {
                 {!editing && (
                     <>
                         <input
+                            key={fileInputVersion}
                             ref={fileInputRef}
                             className="vc-splitview-file-input"
                             type="file"

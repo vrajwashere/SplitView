@@ -4,12 +4,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { React } from "@webpack/common";
+import { React, SelectedChannelStore } from "@webpack/common";
 
+import { isChannelAvailable, openAsPrimary } from "../discord/channel";
 import { settings } from "../settings";
 import { clearMessageViewportStates, forgetMessageViewportState } from "./messageViewportStore";
 import { cancelScheduledPersistedState, flushPersistedState, loadPersistedState, schedulePersistedState } from "./persistence";
-import type { LayoutNode, PersistedSplitState, SplitPaneRecord, SplitPlacement, SplitViewState } from "./types";
+import type { LayoutNode, PersistedSplitState, PrimaryPaneRecord, SplitPaneRecord, SplitPlacement, SplitViewState } from "./types";
 
 type Listener = () => void;
 type LayoutPath = readonly (0 | 1)[];
@@ -18,9 +19,10 @@ const listeners = new Set<Listener>();
 
 function createDefaultState(): SplitViewState {
     return {
-        version: 2,
+        version: 3,
         layout: { type: "primary" },
         panes: {},
+        primary: { tabs: [], activeTabId: null, previewTabId: null },
         activePaneId: null,
         hydrated: false
     };
@@ -233,8 +235,18 @@ export function useWorkspaceLayout(): Pick<SplitViewState, "layout" | "activePan
     return { layout, activePaneId };
 }
 
-export function usePaneState(paneId: string): SplitPaneRecord | undefined {
-    const getSnapshot = React.useCallback(() => state.panes[paneId], [paneId]);
+export function getPaneState(paneId: string): SplitPaneRecord | undefined;
+export function getPaneState(paneId: null): PrimaryPaneRecord;
+export function getPaneState(paneId: string | null): SplitPaneRecord | PrimaryPaneRecord | undefined;
+export function getPaneState(paneId: string | null): SplitPaneRecord | PrimaryPaneRecord | undefined {
+    return paneId == null ? state.primary : state.panes[paneId];
+}
+
+export function usePaneState(paneId: string): SplitPaneRecord | undefined;
+export function usePaneState(paneId: null): PrimaryPaneRecord;
+export function usePaneState(paneId: string | null): SplitPaneRecord | PrimaryPaneRecord | undefined;
+export function usePaneState(paneId: string | null): SplitPaneRecord | PrimaryPaneRecord | undefined {
+    const getSnapshot = React.useCallback(() => getPaneState(paneId), [paneId]);
     return React.useSyncExternalStore(subscribeLayout, getSnapshot, getSnapshot);
 }
 
@@ -261,6 +273,61 @@ export async function initializeLayout(): Promise<void> {
         ...restoredState,
         hydrated: true
     }, false);
+    syncPrimaryChannel();
+}
+
+/** Observe Discord's route without navigating or replacing kept tabs. */
+export function syncPrimaryChannel(): void {
+    if (!state.hydrated) return;
+    const selectedId = SelectedChannelStore.getChannelId();
+    const channelId = selectedId && isChannelAvailable(selectedId) ? selectedId : undefined;
+    const { primary } = state;
+    const existing = primary.tabs.find(tab => tab.channelId === channelId);
+    if (existing) {
+        if (primary.activeTabId !== existing.id) publish({ ...state, primary: { ...primary, activeTabId: existing.id } });
+        return;
+    }
+    if (!channelId && primary.activeTabId == null) return;
+
+    const tabs = primary.tabs.filter(tab => tab.id !== primary.previewTabId);
+    if (primary.previewTabId) forgetMessageViewportState(primary.previewTabId);
+    const preview = channelId ? { id: makeId("tab"), channelId } : null;
+    // Reserve one extra, replaceable preview even when all kept slots are full.
+    if (preview) tabs.push(preview);
+    publish({ ...state, primary: { tabs, activeTabId: preview?.id ?? null, previewTabId: preview?.id ?? null } });
+}
+
+export function keepPrimaryTab(): boolean {
+    const { primary } = state;
+    if (!primary.activeTabId || primary.activeTabId !== primary.previewTabId || primary.tabs.length > MAXIMUM_TABS_PER_PANE) return false;
+    publish({ ...state, primary: { ...primary, previewTabId: null } });
+    return true;
+}
+
+export function canOpenPrimaryTab(channelId: string): boolean {
+    const { primary } = state;
+    const existing = primary.tabs.find(tab => tab.channelId === channelId);
+    return existing
+        ? existing.id !== primary.previewTabId || primary.tabs.length <= MAXIMUM_TABS_PER_PANE
+        : primary.tabs.length < MAXIMUM_TABS_PER_PANE;
+}
+
+/** Adding explicitly also keeps the current preview so it cannot be lost. */
+export function openPrimaryTab(channelId: string): boolean {
+    if (!state.hydrated || !isChannelAvailable(channelId)) return false;
+    syncPrimaryChannel();
+    if (!canOpenPrimaryTab(channelId)) return false;
+    const { primary } = state;
+    const existing = primary.tabs.find(tab => tab.channelId === channelId);
+    const tab = existing ?? { id: makeId("tab"), channelId };
+    const tabs = existing ? primary.tabs : [...primary.tabs, tab];
+    publish({
+        ...state,
+        primary: { tabs, activeTabId: tab.id, previewTabId: tabs.length <= MAXIMUM_TABS_PER_PANE ? null : primary.previewTabId },
+        activePaneId: null
+    });
+    openAsPrimary(channelId);
+    return true;
 }
 
 export function openChannel(channelId: string): boolean {
@@ -284,7 +351,8 @@ export function openChannel(channelId: string): boolean {
     return true;
 }
 
-export function openChannelInPane(channelId: string, paneId: string): boolean {
+export function openChannelInPane(channelId: string, paneId: string | null): boolean {
+    if (paneId == null) return openPrimaryTab(channelId);
     if (activateExistingChannel(channelId)) return true;
     return addChannelTab(paneId, channelId) || openChannel(channelId);
 }
@@ -328,23 +396,52 @@ export function splitChannel(channelId: string, targetPaneId: string | null, pla
     return true;
 }
 
-export function activateTab(paneId: string, tabId: string): void {
-    const pane = state.panes[paneId];
+export function activateTab(paneId: string | null, tabId: string): void {
+    const pane = getPaneState(paneId);
     const tab = pane?.tabs.find(candidate => candidate.id === tabId);
     if (!pane || !tab) return;
+    if (paneId == null) {
+        if (!isChannelAvailable(tab.channelId)) return;
+        if (pane.activeTabId !== tabId || state.activePaneId !== null) {
+            publish({ ...state, primary: { ...state.primary, activeTabId: tabId }, activePaneId: null });
+        }
+        // Never render a split message list or composer for the primary pane.
+        openAsPrimary(tab.channelId);
+        return;
+    }
     if (pane.activeTabId === tabId && state.activePaneId === paneId) return;
 
     publish({
         ...state,
         panes: {
             ...state.panes,
-            [paneId]: { ...pane, channelId: tab.channelId, activeTabId: tab.id }
+            [paneId]: { ...state.panes[paneId], channelId: tab.channelId, activeTabId: tab.id }
         },
         activePaneId: paneId
     });
 }
 
-export function closeTab(paneId: string, tabId: string): void {
+export function closeTab(paneId: string | null, tabId: string): void {
+    if (paneId == null) {
+        const { primary } = state;
+        const closedIndex = primary.tabs.findIndex(tab => tab.id === tabId);
+        if (closedIndex < 0) return;
+        // Discord always needs a main view. Closing its last kept tab unkeeps it.
+        if (primary.tabs.length === 1 && primary.activeTabId === tabId) {
+            if (primary.previewTabId !== tabId) publish({ ...state, primary: { ...primary, previewTabId: tabId } });
+            return;
+        }
+        const tabs = primary.tabs.filter(tab => tab.id !== tabId);
+        const nextTab = primary.activeTabId === tabId ? tabs[Math.min(closedIndex, tabs.length - 1)] : undefined;
+        forgetMessageViewportState(tabId);
+        publish({ ...state, primary: {
+            tabs,
+            activeTabId: nextTab?.id ?? (primary.activeTabId === tabId ? null : primary.activeTabId),
+            previewTabId: primary.previewTabId === tabId ? null : primary.previewTabId
+        } });
+        if (nextTab) openAsPrimary(nextTab.channelId);
+        return;
+    }
     const pane = state.panes[paneId];
     if (!pane) return;
     const closedIndex = pane.tabs.findIndex(tab => tab.id === tabId);
@@ -375,20 +472,30 @@ export function closeTab(paneId: string, tabId: string): void {
     });
 }
 
-export function canMoveTab(paneId: string, tabId: string): boolean {
-    const target = state.panes[paneId];
-    const source = Object.values(state.panes).find(pane => pane.tabs.some(tab => tab.id === tabId));
+function findTabSource(tabId: string) {
+    if (state.primary.tabs.some(tab => tab.id === tabId)) return { paneId: null, pane: state.primary };
+    const pane = Object.values(state.panes).find(candidate => candidate.tabs.some(tab => tab.id === tabId));
+    return pane ? { paneId: pane.id, pane } : undefined;
+}
+
+export function canMoveTab(paneId: string | null, tabId: string): boolean {
+    const target = getPaneState(paneId);
+    const source = findTabSource(tabId);
     if (!target || !source) return false;
-    if (source.id === target.id) return true;
-    const tab = source.tabs.find(tab => tab.id === tabId)!;
+    if (source.paneId === paneId) return true;
+    const tab = source.pane.tabs.find(tab => tab.id === tabId)!;
+    if (paneId == null) {
+        return isChannelAvailable(tab.channelId)
+            && target.tabs.filter(candidate => candidate.channelId !== tab.channelId).length < MAXIMUM_TABS_PER_PANE;
+    }
     return target.tabs.length < MAXIMUM_TABS_PER_PANE
         && !target.tabs.some(candidate => candidate.channelId === tab.channelId);
 }
 
-export function moveTab(paneId: string, tabId: string, targetTabId?: string, placement: "before" | "after" = "before"): boolean {
+export function moveTab(paneId: string | null, tabId: string, targetTabId?: string, placement: "before" | "after" = "before"): boolean {
     if (tabId === targetTabId || !canMoveTab(paneId, tabId)) return false;
-    const target = state.panes[paneId];
-    const source = Object.values(state.panes).find(pane => pane.tabs.some(tab => tab.id === tabId))!;
+    const target = getPaneState(paneId)!;
+    const { paneId: sourcePaneId, pane: source } = findTabSource(tabId)!;
     const sourceIndex = source.tabs.findIndex(tab => tab.id === tabId);
     const tab = source.tabs[sourceIndex];
     const tabs = target.tabs.filter(candidate => candidate.id !== tabId);
@@ -396,40 +503,71 @@ export function moveTab(paneId: string, tabId: string, targetTabId?: string, pla
     if (targetIndex < 0) return false;
     tabs.splice(targetIndex + (targetTabId != null && placement === "after" ? 1 : 0), 0, tab);
 
-    const movingAcrossPanes = source.id !== target.id;
-    const panes = {
-        ...state.panes,
-        [paneId]: {
-            ...target,
-            tabs,
-            activeTabId: movingAcrossPanes ? tab.id : target.activeTabId,
-            channelId: movingAcrossPanes ? tab.channelId : target.channelId
+    const movingAcrossPanes = sourcePaneId !== paneId;
+    const panes = { ...state.panes };
+    let { primary } = state;
+    if (paneId == null) {
+        // A split can show the current native channel too. Merge that duplicate
+        // while retaining the dragged tab's identity and viewport cache.
+        const duplicate = tabs.find(candidate => candidate.channelId === tab.channelId && candidate.id !== tabId);
+        if (duplicate) {
+            tabs.splice(tabs.indexOf(duplicate), 1);
+            forgetMessageViewportState(duplicate.id);
         }
-    };
+        primary = {
+            tabs,
+            activeTabId: movingAcrossPanes ? tab.id : primary.activeTabId,
+            previewTabId: movingAcrossPanes || (primary.previewTabId === tabId && tabs.length <= MAXIMUM_TABS_PER_PANE)
+                ? null : primary.previewTabId
+        };
+    } else {
+        panes[paneId] = {
+            ...state.panes[paneId], tabs,
+            activeTabId: movingAcrossPanes ? tab.id : target.activeTabId,
+            channelId: movingAcrossPanes ? tab.channelId : state.panes[paneId].channelId
+        } as SplitPaneRecord;
+    }
     if (movingAcrossPanes) {
         const remainingTabs = source.tabs.filter(candidate => candidate.id !== tabId);
-        if (remainingTabs.length) {
+        if (sourcePaneId == null) {
+            // The last native tab can move, but Discord's main view cannot close.
+            const fallback = { id: makeId("tab"), channelId: tab.channelId };
+            const activeTab = remainingTabs.find(candidate => candidate.id === source.activeTabId)
+                ?? remainingTabs[Math.min(sourceIndex, remainingTabs.length - 1)]
+                ?? fallback;
+            primary = {
+                tabs: remainingTabs.length ? remainingTabs : [fallback],
+                activeTabId: source.activeTabId == null ? null : activeTab.id,
+                previewTabId: !remainingTabs.length ? fallback.id : primary.previewTabId === tabId ? null : primary.previewTabId
+            };
+        } else if (remainingTabs.length) {
             const activeTab = remainingTabs.find(candidate => candidate.id === source.activeTabId)
                 ?? remainingTabs[Math.min(sourceIndex, remainingTabs.length - 1)];
-            panes[source.id] = { ...source, tabs: remainingTabs, activeTabId: activeTab.id, channelId: activeTab.channelId };
+            panes[sourcePaneId] = { ...state.panes[sourcePaneId], tabs: remainingTabs, activeTabId: activeTab.id, channelId: activeTab.channelId };
         } else {
             // Moving is not closing: retain the tab ID, viewport cache and draft.
-            delete panes[source.id];
+            delete panes[sourcePaneId];
         }
     }
 
+    const previousPrimaryChannel = state.primary.tabs.find(candidate => candidate.id === state.primary.activeTabId)?.channelId;
     publish({
         ...state,
         layout: movingAcrossPanes ? pruneLayout(state.layout, panes) ?? { type: "primary" } : state.layout,
         panes,
+        primary,
         activePaneId: movingAcrossPanes ? paneId : state.activePaneId
     });
+    const primaryChannel = primary.tabs.find(candidate => candidate.id === primary.activeTabId)?.channelId;
+    if (primaryChannel && (primaryChannel !== previousPrimaryChannel || (movingAcrossPanes && paneId == null))) openAsPrimary(primaryChannel);
     return true;
 }
 
-export function swapPanePositions(paneId: string, targetPaneId: string | null): boolean {
-    if (paneId === targetPaneId || !state.panes[paneId] || (targetPaneId != null && !state.panes[targetPaneId])) return false;
-    const sourcePath = findNodePath(state.layout, node => node.type === "pane" && node.paneId === paneId);
+export function swapPanePositions(paneId: string | null, targetPaneId: string | null): boolean {
+    if (paneId === targetPaneId || !getPaneState(paneId) || !getPaneState(targetPaneId)) return false;
+    const sourcePath = findNodePath(state.layout, node => paneId == null
+        ? node.type === "primary"
+        : node.type === "pane" && node.paneId === paneId);
     const targetPath = findNodePath(state.layout, node => targetPaneId == null
         ? node.type === "primary"
         : node.type === "pane" && node.paneId === targetPaneId);
@@ -548,6 +686,13 @@ export function setDraft(channelId: string, draft: string): void {
 }
 
 export function pruneUnavailableChannels(isAvailable: (channelId: string) => boolean): void {
+    const primaryTabs = state.primary.tabs.filter(tab => isAvailable(tab.channelId));
+    const primaryChanged = primaryTabs.length !== state.primary.tabs.length;
+    const primary = primaryChanged ? {
+        tabs: primaryTabs,
+        activeTabId: primaryTabs.some(tab => tab.id === state.primary.activeTabId) ? state.primary.activeTabId : null,
+        previewTabId: primaryTabs.some(tab => tab.id === state.primary.previewTabId) ? state.primary.previewTabId : null
+    } : state.primary;
     let panesChanged = false;
     const panes = Object.fromEntries(
         Object.entries(state.panes).flatMap(([paneId, pane]) => {
@@ -571,11 +716,12 @@ export function pruneUnavailableChannels(isAvailable: (channelId: string) => boo
     );
     const layout = pruneLayout(state.layout, panes) ?? { type: "primary" };
 
-    if (!panesChanged && Object.keys(panes).length === Object.keys(state.panes).length) return;
+    if (!primaryChanged && !panesChanged && Object.keys(panes).length === Object.keys(state.panes).length) return;
     publish({
         ...state,
         layout,
         panes,
+        primary,
         activePaneId: state.activePaneId && panes[state.activePaneId] ? state.activePaneId : firstPaneId(layout) ?? null
     });
 }

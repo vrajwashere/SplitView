@@ -27,7 +27,7 @@ export const settings = definePluginSettings({
     },
     restorePanesAfterRestart: {
         type: OptionType.BOOLEAN,
-        description: "Restore saved split panes when Discord restarts",
+        description: "Restore saved split panes and main chat tabs when Discord restarts",
         default: true
     },
     maximumRenderedMessages: {
@@ -43,7 +43,7 @@ export const settings = definePluginSettings({
     },
     showPaneTabs: {
         type: OptionType.BOOLEAN,
-        description: "Show browser-style tabs for channels opened in the secondary pane",
+        description: "Show all tabs in each pane, including the main chat (otherwise only the active tab is shown)",
         default: true
     },
     maximumPaneCount: {

@@ -5,7 +5,7 @@
  */
 
 import { logger } from "../logger";
-import type { LayoutNode, PersistedSplitState, SplitPaneRecord } from "./types";
+import type { LayoutNode, PersistedSplitState, PrimaryPaneRecord, SplitPaneRecord } from "./types";
 
 const MAXIMUM_DRAFT_COUNT = 500;
 const MAXIMUM_DRAFT_LENGTH = 100_000;
@@ -105,7 +105,7 @@ function parsePane(id: string, value: unknown, tabIds: Set<string>): SplitPaneRe
 export function migratePersistedState(value: unknown): PersistedSplitState | null {
     if (!isRecord(value)) return null;
 
-    if (value.version !== 1 && value.version !== 2) {
+    if (value.version !== 1 && value.version !== 2 && value.version !== 3) {
         logger.warn("Ignoring a saved layout with an unsupported version", value.version);
         return null;
     }
@@ -160,6 +160,24 @@ export function migratePersistedState(value: unknown): PersistedSplitState | nul
     }
     const panes = Object.fromEntries(parsedPaneEntries) as Record<string, SplitPaneRecord>;
 
+    const primary: PrimaryPaneRecord = { tabs: [], activeTabId: null, previewTabId: null };
+    if (value.version === 3) {
+        const saved = value.primary;
+        if (!isRecord(saved) || !Array.isArray(saved.tabs) || saved.tabs.length > MAXIMUM_TABS_PER_PANE + 1) return null;
+        const channelIds = new Set<string>();
+        for (const tab of saved.tabs) {
+            if (!isRecord(tab) || !isIdentifier(tab.id) || !isIdentifier(tab.channelId) || tabIds.has(tab.id) || channelIds.has(tab.channelId)) return null;
+            tabIds.add(tab.id);
+            channelIds.add(tab.channelId);
+            primary.tabs.push({ id: tab.id, channelId: tab.channelId });
+        }
+        if (saved.activeTabId !== null && !primary.tabs.some(tab => tab.id === saved.activeTabId)) return null;
+        if (saved.previewTabId !== null && !primary.tabs.some(tab => tab.id === saved.previewTabId)) return null;
+        if (saved.tabs.length > MAXIMUM_TABS_PER_PANE && saved.previewTabId === null) return null;
+        primary.activeTabId = saved.activeTabId as string | null;
+        primary.previewTabId = saved.previewTabId as string | null;
+    }
+
     const layoutPaneIds = collectPaneIds(layout);
     const uniqueLayoutPaneIds = new Set(layoutPaneIds);
     if (uniqueLayoutPaneIds.size !== layoutPaneIds.length || layoutPaneIds.some(paneId => !panes[paneId])) {
@@ -183,9 +201,10 @@ export function migratePersistedState(value: unknown): PersistedSplitState | nul
         : null;
 
     return {
-        version: 2,
+        version: 3,
         layout,
         panes,
+        primary,
         activePaneId,
         drafts
     };

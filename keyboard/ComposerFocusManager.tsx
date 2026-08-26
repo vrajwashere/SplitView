@@ -6,7 +6,7 @@
 
 import { ComponentDispatch, React } from "@webpack/common";
 
-import { equalizeViewSizes, getLayoutState, setActivePane } from "../state/layoutStore";
+import { activateTab, equalizeViewSizes, getLayoutState, getPaneState, setActivePane } from "../state/layoutStore";
 
 export interface PaneShortcutRect {
     height: number;
@@ -26,6 +26,33 @@ interface PaneShortcutTarget {
 }
 
 const splitComposers = new Map<string, HTMLTextAreaElement>();
+const paneContainers = new Map<string | null, HTMLElement>();
+let primaryComposer: HTMLElement | null = null;
+
+export function usePaneFocusRef(paneId: string | null) {
+    return React.useCallback((pane: HTMLElement | null) => {
+        if (pane) paneContainers.set(paneId, pane);
+        else {
+            paneContainers.delete(paneId);
+            if (paneId == null) primaryComposer = null;
+        }
+    }, [paneId]);
+}
+
+/** Capture the native editor through the patched chat's React focus event. */
+export function rememberPrimaryComposer(target: EventTarget | null): void {
+    if (target instanceof HTMLElement && target.isContentEditable && target.getAttribute("role") === "textbox") {
+        primaryComposer = target;
+    }
+}
+
+function getPaneElement(paneId: string | null): HTMLElement | undefined {
+    return paneContainers.get(paneId);
+}
+
+function focusPaneContainer(paneId: string | null): void {
+    getPaneElement(paneId)?.focus({ preventScroll: true });
+}
 
 export function registerSplitComposer(paneId: string, composer: HTMLTextAreaElement | null): void {
     if (composer) splitComposers.set(paneId, composer);
@@ -42,8 +69,16 @@ export function focusSplitComposer(paneId = getLayoutState().activePaneId): bool
     return true;
 }
 
-function focusPrimaryComposer(): void {
-    ComponentDispatch.dispatchToLastSubscribed("TEXTAREA_FOCUS");
+export function focusPrimaryComposer(): void {
+    const pane = getPaneElement(null);
+    if (primaryComposer?.isConnected && pane?.contains(primaryComposer)) {
+        primaryComposer.focus({ preventScroll: true });
+    } else {
+        // Let Discord resolve its own editor when a channel change replaces it.
+        ComponentDispatch.dispatchToLastSubscribed("TEXTAREA_FOCUS");
+    }
+    // A read-only/unmounted editor must not leave focus in the previous split.
+    if (pane?.isConnected && !pane.contains(document.activeElement)) focusPaneContainer(null);
 }
 
 function orderedTargets(geometry: PaneShortcutGeometry): PaneShortcutTarget[] {
@@ -89,7 +124,7 @@ function directionalTarget(
 function activatePane(paneId: string | null): void {
     setActivePane(paneId);
     if (paneId == null) focusPrimaryComposer();
-    else focusSplitComposer(paneId);
+    else if (!focusSplitComposer(paneId)) focusPaneContainer(paneId);
 }
 
 export function ComposerShortcuts({ geometry }: { geometry: PaneShortcutGeometry; }) {
@@ -97,7 +132,53 @@ export function ComposerShortcuts({ geometry }: { geometry: PaneShortcutGeometry
     geometryRef.current = geometry;
 
     React.useEffect(() => {
+        let focusFrame: number | undefined;
+
         function onKeyDown(event: globalThis.KeyboardEvent): void {
+            if (event.defaultPrevented || event.isComposing) return;
+            if (event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+                // Capture before the native editor consumes Ctrl+Arrow to move the caret.
+                // Scope to the workspace so dialogs and the sidebar keep their shortcuts.
+                const { target } = event;
+                if (!(target instanceof Element) || target.closest('[role="dialog"], [role="menu"], [aria-modal="true"]')) return;
+                const sourcePane = Array.from(paneContainers.values()).find(pane => pane.contains(target));
+                if (!sourcePane && !(target === document.body && focusFrame != null)) return;
+                // Clicking non-focusable chat content changes the selected pane
+                // without moving DOM focus out of the previous pane's editor.
+                const { activePaneId: paneId } = getLayoutState();
+                const paneElement = getPaneElement(paneId);
+                if (!paneElement) return;
+                const pane = getPaneState(paneId);
+                if (!pane?.activeTabId || pane.tabs.length < 2) return;
+                const index = pane.tabs.findIndex(tab => tab.id === pane.activeTabId);
+                if (index < 0) return;
+                const offset = event.key === "ArrowLeft" ? -1 : 1;
+                const nextTab = pane.tabs[(index + offset + pane.tabs.length) % pane.tabs.length];
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                // Keep repeat key events on a stable element while navigation
+                // replaces the native editor or the split's controlled textarea.
+                focusPaneContainer(paneId);
+                activateTab(paneId, nextTab.id);
+
+                // Navigation can replace the focused editor. Wait for its refs
+                // to attach, without stealing focus if the user leaves the pane.
+                if (focusFrame != null) cancelAnimationFrame(focusFrame);
+                focusFrame = requestAnimationFrame(() => {
+                    focusFrame = requestAnimationFrame(() => {
+                        focusFrame = undefined;
+                        if (!paneElement.isConnected || getLayoutState().activePaneId !== paneId || getPaneState(paneId)?.activeTabId !== nextTab.id) return;
+                        const focused = document.activeElement;
+                        if (focused && focused !== document.body && !paneElement.contains(focused)) return;
+                        if (paneId == null) {
+                            focusPrimaryComposer();
+                        } else if (!focusSplitComposer(paneId)) {
+                            focusPaneContainer(paneId);
+                        }
+                    });
+                });
+                return;
+            }
             if (event.repeat || event.metaKey) return;
 
             let handled = false;
@@ -144,7 +225,10 @@ export function ComposerShortcuts({ geometry }: { geometry: PaneShortcutGeometry
         }
 
         window.addEventListener("keydown", onKeyDown, true);
-        return () => window.removeEventListener("keydown", onKeyDown, true);
+        return () => {
+            if (focusFrame != null) cancelAnimationFrame(focusFrame);
+            window.removeEventListener("keydown", onKeyDown, true);
+        };
     }, []);
 
     return null;

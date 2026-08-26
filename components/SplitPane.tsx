@@ -10,8 +10,8 @@ import type { ComponentType, KeyboardEvent } from "react";
 
 import { SplitComposerTarget, SplitPaneProvider } from "../context/SplitPaneContext";
 import { getChannel, isSupportedMessageChannel } from "../discord/channel";
-import { focusSplitComposer } from "../keyboard/ComposerFocusManager";
-import { activateTab, closeTab, getLayoutState, setActivePane, useIsPaneActive, usePaneState } from "../state/layoutStore";
+import { usePaneFocusRef } from "../keyboard/ComposerFocusManager";
+import { closeTab, getLayoutState, setActivePane, useIsPaneActive, usePaneState } from "../state/layoutStore";
 import type { SplitPaneRecord } from "../state/types";
 import { StableMessageList } from "./MessageList";
 import { StablePaneTabs } from "./PaneTabs";
@@ -29,9 +29,8 @@ interface SplitPaneProps {
 }
 
 function SplitChannelPane({ active, channel, pane, paneId }: SplitChannelPaneProps) {
+    const paneFocusRef = usePaneFocusRef(paneId);
     const [composerTarget, setComposerTarget] = useState<SplitComposerTarget>(null);
-    const paneRef = React.useRef<HTMLElement>(null);
-    const focusAfterTabSwitch = React.useRef(false);
     const beginReply = React.useCallback((messageId: string) => {
         setComposerTarget({ kind: "reply", messageId });
     }, []);
@@ -58,18 +57,6 @@ function SplitChannelPane({ active, channel, pane, paneId }: SplitChannelPanePro
         setComposerTarget(null);
     }, [channel.id]);
 
-    React.useLayoutEffect(() => {
-        if (!focusAfterTabSwitch.current) return;
-        focusAfterTabSwitch.current = false;
-        if (!active) return;
-        // Tab changes replace the focused composer. Restore focus after the new
-        // ref attaches so subsequent shortcuts still reach this pane.
-        if (!focusSplitComposer(paneId)) {
-            // Read-only channels still need a focus target for tab shortcuts.
-            paneRef.current?.focus({ preventScroll: true });
-        }
-    }, [active, pane.activeTabId, paneId]);
-
     function onKeyDown(event: KeyboardEvent<HTMLElement>) {
         if (!event.ctrlKey || event.altKey || event.metaKey) return;
         // Read the store rather than the last render so closely spaced key
@@ -82,24 +69,17 @@ function SplitChannelPane({ active, channel, pane, paneId }: SplitChannelPanePro
             closeTab(paneId, currentPane.activeTabId);
             return;
         }
-        if (event.shiftKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight") || currentPane.tabs.length < 2) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const currentIndex = currentPane.tabs.findIndex(tab => tab.id === currentPane.activeTabId);
-        const direction = event.key === "ArrowLeft" ? -1 : 1;
-        const nextIndex = (currentIndex + direction + currentPane.tabs.length) % currentPane.tabs.length;
-        focusAfterTabSwitch.current = true;
-        activateTab(paneId, currentPane.tabs[nextIndex].id);
     }
 
     return (
         <SplitPaneProvider value={context} composerValue={composerContext}>
             <section
-                ref={paneRef}
+                ref={paneFocusRef}
                 tabIndex={-1}
                 className={`vc-splitview-pane${active ? " vc-splitview-pane-active" : ""}`}
                 aria-label={`Split view for ${channel.name || "direct message"}`}
                 onPointerDown={() => setActivePane(paneId)}
+                onFocusCapture={() => setActivePane(paneId)}
                 onKeyDown={onKeyDown}
             >
                 <StablePaneTabs paneId={paneId} />
