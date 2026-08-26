@@ -24,6 +24,15 @@
     overflow: hidden;
 }
 
+.vc-splitview-primary-slot,
+.vc-splitview-pane-slot {
+    background-color: var(--vc-splitview-native-chat-background-color, var(--vc-splitview-surface));
+    background-image: var(--vc-splitview-native-chat-background-image, none);
+    background-position: var(--vc-splitview-native-chat-background-position, initial);
+    background-repeat: var(--vc-splitview-native-chat-background-repeat, initial);
+    background-size: var(--vc-splitview-native-chat-background-size, initial);
+}
+
 .vc-splitview-primary-slot {
     display: flex;
     flex: 1 1 auto;
@@ -101,11 +110,6 @@
     min-height: 0;
     overflow: hidden;
     contain: layout paint;
-    background-color: var(--vc-splitview-native-chat-background-color, var(--vc-splitview-surface));
-    background-image: var(--vc-splitview-native-chat-background-image, none);
-    background-position: var(--vc-splitview-native-chat-background-position, initial);
-    background-repeat: var(--vc-splitview-native-chat-background-repeat, initial);
-    background-size: var(--vc-splitview-native-chat-background-size, initial);
     box-shadow: inset 0 0 0 1px var(--vc-splitview-border);
     pointer-events: auto;
 }
@@ -133,10 +137,6 @@
     background-repeat: var(--vc-splitview-native-header-background-repeat, initial);
     background-size: var(--vc-splitview-native-header-background-size, initial);
     box-shadow: var(--vc-splitview-native-header-box-shadow, var(--elevation-low));
-}
-
-.vc-splitview-primary-slot > .vc-splitview-tabbar {
-    background-color: var(--background-base-low, var(--background-secondary));
 }
 
 .vc-splitview-tab-navigation {
