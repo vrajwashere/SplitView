@@ -1,0 +1,1009 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 Vraj
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+.vc-splitview-host {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.vc-splitview-host-active > .vc-splitview-primary {
+    position: absolute !important;
+    z-index: 0;
+    inset: var(--vc-splitview-primary-top, 0) auto auto var(--vc-splitview-primary-left, 0) !important;
+    box-sizing: border-box;
+    width: var(--vc-splitview-primary-width, 50%) !important;
+    min-width: 0 !important;
+    height: var(--vc-splitview-primary-height, 100%) !important;
+    min-height: 0 !important;
+    transform: var(--vc-splitview-primary-resize-transform, none);
+    transform-origin: top left;
+}
+
+.vc-splitview-host-resizing > .vc-splitview-primary {
+    will-change: transform;
+}
+
+.vc-splitview-active-pane-outline {
+    position: absolute;
+    z-index: 3;
+    box-sizing: border-box;
+    border-radius: 4px;
+    pointer-events: none;
+    box-shadow:
+        inset 0 0 0 2px var(--brand-500),
+        inset 0 0 0 3px color-mix(in srgb, var(--brand-500) 35%, transparent);
+    transition: left 120ms ease, top 120ms ease, width 120ms ease, height 120ms ease;
+}
+
+.vc-splitview-host-resizing > .vc-splitview-active-pane-outline {
+    transition: none;
+}
+
+.vc-splitview-secondary-root {
+    --vc-splitview-text-primary: var(--text-default);
+    --vc-splitview-text-secondary: var(--text-muted);
+    --vc-splitview-interactive: var(--interactive-normal, var(--interactive-hover));
+    --vc-splitview-input-background: var(--input-background-default, var(--channeltextarea-background));
+    --vc-splitview-input-border: var(--input-border-default, var(--border-subtle));
+    --vc-splitview-border: var(--border-subtle, var(--background-modifier-accent));
+    --vc-splitview-header-action: var(--vc-splitview-native-header-action-color, var(--text-default));
+    --vc-splitview-surface: var(--background-base-lower, var(--background-primary));
+    --vc-splitview-surface-raised: var(--background-base-low, var(--background-secondary));
+
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    display: block;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    color: var(--vc-splitview-native-color, var(--vc-splitview-text-primary));
+    pointer-events: none;
+    font-family: var(--vc-splitview-native-font-family, var(--font-primary));
+}
+
+.vc-splitview-layout {
+    position: absolute;
+    inset: 0;
+    min-width: 0;
+    min-height: 0;
+    pointer-events: none;
+}
+
+.vc-splitview-pane-slot {
+    position: absolute;
+    display: flex;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    contain: layout paint;
+    background-color: var(--vc-splitview-native-chat-background-color, var(--vc-splitview-surface));
+    background-image: var(--vc-splitview-native-chat-background-image, none);
+    background-position: var(--vc-splitview-native-chat-background-position, initial);
+    background-repeat: var(--vc-splitview-native-chat-background-repeat, initial);
+    background-size: var(--vc-splitview-native-chat-background-size, initial);
+    box-shadow: inset 0 0 0 1px var(--vc-splitview-border);
+    pointer-events: auto;
+}
+
+.vc-splitview-pane {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: transparent;
+}
+
+.vc-splitview-tabbar {
+    display: flex;
+    flex: 0 0 48px;
+    align-items: center;
+    min-width: 0;
+    border-bottom: 1px solid var(--vc-splitview-native-header-border-color, var(--vc-splitview-border));
+    background-color: var(--vc-splitview-native-header-background-color, transparent);
+    background-image: var(--vc-splitview-native-header-background-image, none);
+    background-position: var(--vc-splitview-native-header-background-position, initial);
+    background-repeat: var(--vc-splitview-native-header-background-repeat, initial);
+    background-size: var(--vc-splitview-native-header-background-size, initial);
+    box-shadow: var(--vc-splitview-native-header-box-shadow, var(--elevation-low));
+}
+
+.vc-splitview-tab-navigation {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.vc-splitview-tabs {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 0 4px;
+    overflow: auto hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, transparent, #000 var(--vc-splitview-tab-fade-left, 0), #000 calc(100% - var(--vc-splitview-tab-fade-right, 0px)), transparent);
+}
+
+.vc-splitview-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.vc-splitview-tabs-overflow-left {
+    --vc-splitview-tab-fade-left: 12px;
+}
+
+.vc-splitview-tabs-overflow-right {
+    --vc-splitview-tab-fade-right: 12px;
+}
+
+.vc-splitview-tab-scroll-button {
+    display: grid;
+    flex: 0 0 22px;
+    place-items: center;
+    width: 22px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    color: var(--vc-splitview-header-action);
+    background: transparent;
+    cursor: pointer;
+}
+
+.vc-splitview-tab-scroll-button:where(:enabled):hover {
+    background: var(--background-modifier-hover);
+}
+
+.vc-splitview-tab-scroll-button:disabled {
+    cursor: default;
+    opacity: 0.25;
+}
+
+.vc-splitview-tab-scroll-button svg {
+    width: 16px;
+    height: 16px;
+}
+
+.vc-splitview-pane-drag-handle {
+    display: grid;
+    flex: 0 0 24px;
+    place-items: center;
+    height: 32px;
+    margin-left: 4px;
+    border-radius: 4px;
+    color: var(--vc-splitview-text-secondary);
+    cursor: grab;
+    user-select: none;
+}
+
+.vc-splitview-pane-drag-handle:hover {
+    color: var(--vc-splitview-header-action);
+    background: var(--background-modifier-hover);
+}
+
+.vc-splitview-pane-drag-handle:active {
+    cursor: grabbing;
+}
+
+.vc-splitview-pane-drag-handle svg {
+    width: 18px;
+    height: 18px;
+    pointer-events: none;
+}
+
+.vc-splitview-tab {
+    position: relative;
+    display: flex;
+    flex: 0 1 200px;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    min-width: 128px;
+    max-width: 240px;
+    height: 36px;
+    padding: 0 6px;
+    overflow: hidden;
+    border-radius: 4px;
+    color: var(--vc-splitview-text-secondary);
+    background: transparent;
+    cursor: grab;
+}
+
+.vc-splitview-tab:only-child {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.vc-splitview-tab:hover {
+    color: var(--vc-splitview-interactive);
+    background: var(--background-modifier-hover);
+}
+
+.vc-splitview-tab-active {
+    color: var(--vc-splitview-text-primary);
+    background: transparent;
+}
+
+.vc-splitview-tab-dragging {
+    opacity: 0.45;
+}
+
+.vc-splitview-tab-drop-marker {
+    position: fixed;
+    border-radius: 2px;
+    background: var(--brand-500);
+    box-shadow: 0 0 0 1px var(--background-primary);
+}
+
+.vc-splitview-tab-icon,
+.vc-splitview-tab-icon-fallback {
+    flex: 0 0 20px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+}
+
+.vc-splitview-tab-icon {
+    object-fit: cover;
+}
+
+.vc-splitview-tab-icon-fallback {
+    display: grid;
+    place-items: center;
+    color: var(--vc-splitview-text-primary);
+    background: var(--background-modifier-selected);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.vc-splitview-tab-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vc-splitview-tab-close {
+    display: grid;
+    flex: 0 0 20px;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    opacity: 0;
+    color: var(--vc-splitview-text-primary);
+    background: transparent;
+    cursor: pointer;
+}
+
+.vc-splitview-tab-close:hover {
+    color: var(--vc-splitview-text-primary);
+    background: var(--background-modifier-hover);
+}
+
+.vc-splitview-tab-close:focus-visible,
+.vc-splitview-tab-active .vc-splitview-tab-close,
+.vc-splitview-tab:hover .vc-splitview-tab-close {
+    opacity: 1;
+}
+
+.vc-splitview-tab-close svg {
+    width: 14px;
+    height: 14px;
+}
+
+.vc-splitview-close-split-button {
+    display: grid;
+    flex: 0 0 32px;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    margin: 0 8px 0 0;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    color: var(--vc-splitview-header-action);
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+}
+
+.vc-splitview-close-split-button:hover {
+    color: var(--white-500);
+    background: var(--red-430, var(--status-danger));
+}
+
+.vc-splitview-close-split-button svg {
+    width: 20px;
+    height: 20px;
+}
+
+.vc-splitview-open-primary-button {
+    display: grid;
+    flex: 0 0 32px;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    margin-right: 4px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    color: var(--vc-splitview-header-action);
+    background: transparent;
+    cursor: pointer;
+}
+
+.vc-splitview-open-primary-button svg {
+    width: 20px;
+    height: 20px;
+}
+
+.vc-splitview-open-primary-button:hover {
+    color: var(--vc-splitview-text-primary);
+    background: var(--background-modifier-hover);
+}
+
+.vc-splitview-message-scroller {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-color: var(--scrollbar-thin-thumb) var(--scrollbar-thin-track);
+    scrollbar-width: thin;
+}
+
+.vc-splitview-message-list {
+    position: relative;
+    box-sizing: border-box;
+    min-height: 100%;
+}
+
+.vc-splitview-message-row {
+    position: relative;
+}
+
+.vc-splitview-message-row-virtual {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    contain: layout style;
+}
+
+:where(
+    .vc-splitview-native-message [class*="avatar" i],
+    .vc-splitview-native-message [class*="username" i],
+    .vc-splitview-native-message h3 button:first-of-type,
+    .vc-splitview-native-message [class*="header_" i] button:first-of-type
+) {
+    cursor: pointer !important;
+}
+
+.vc-splitview-message-row:not([data-group-continuation="true"])
+    .vc-splitview-native-message
+    [class*="groupStart_"] {
+    margin-top: var(--vc-splitview-native-group-start-margin);
+}
+
+.vc-splitview-message-row[data-group-continuation="true"]
+    .vc-splitview-native-message
+    [class*="groupStart_"] {
+    margin-top: 0;
+}
+
+.vc-splitview-message-row[data-group-continuation="true"]
+    .vc-splitview-native-message
+    [class*="contents_"]
+    > h3,
+.vc-splitview-message-row[data-group-continuation="true"]
+    .vc-splitview-native-message
+    [class*="contents_"]
+    > [class*="header_"],
+.vc-splitview-message-row[data-group-continuation="true"]
+    .vc-splitview-native-message
+    [class*="contents_"]
+    > [class*="avatar_"],
+.vc-splitview-message-row[data-group-continuation="true"]
+    .vc-splitview-native-message
+    [class*="contents_"]
+    > [class*="avatarDecoration_"] {
+    display: none;
+}
+
+.vc-splitview-message-mentioned {
+    background: var(--background-mentioned, color-mix(in srgb, var(--yellow-300) 10%, transparent));
+}
+
+.vc-splitview-message-mentioned::before {
+    position: absolute;
+    z-index: 1;
+    inset: 0 auto 0 0;
+    width: 2px;
+    background: var(--info-warning-foreground, var(--yellow-300));
+    content: "";
+    pointer-events: none;
+}
+
+.vc-splitview-message-mentioned:hover {
+    background: var(
+        --background-mentioned-hover,
+        var(--background-mentioned, color-mix(in srgb, var(--yellow-300) 10%, transparent))
+    );
+}
+
+.vc-splitview-message-actions {
+    position: absolute;
+    z-index: 5;
+    top: -8px;
+    right: 16px;
+    display: flex;
+    overflow: hidden;
+    border: 1px solid var(--vc-splitview-border);
+    border-radius: 8px;
+    background: var(--background-surface-higher, var(--vc-splitview-surface-raised));
+    box-shadow: var(--elevation-stroke, 0 1px 4px rgb(0 0 0 / 24%));
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(2px);
+    transition: opacity 100ms ease, transform 100ms ease;
+}
+
+.vc-splitview-message-row:hover > .vc-splitview-message-actions,
+.vc-splitview-message-row:has(> .vc-splitview-message-actions .vc-splitview-message-action:focus-visible)
+    > .vc-splitview-message-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+.vc-splitview-message-action {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    color: var(--vc-splitview-text-primary);
+    background: transparent;
+    cursor: pointer;
+    opacity: 0.78;
+}
+
+.vc-splitview-message-action:hover,
+.vc-splitview-message-action:focus-visible {
+    color: var(--vc-splitview-text-primary);
+    background: var(--background-modifier-hover);
+    outline: 0;
+    opacity: 1;
+}
+
+.vc-splitview-message-action-danger:hover,
+.vc-splitview-message-action-danger:focus-visible {
+    color: var(--text-feedback-critical);
+}
+
+.vc-splitview-load-earlier {
+    display: block;
+    margin: 12px auto 0;
+    padding: 6px 12px;
+    border: 1px solid var(--vc-splitview-border);
+    border-radius: 999px;
+    color: var(--text-link);
+    background: var(--vc-splitview-surface-raised);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+}
+
+.vc-splitview-load-earlier:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.vc-splitview-status {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 96px;
+    padding: 20px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.vc-splitview-status-error {
+    color: var(--text-feedback-critical);
+}
+
+.vc-splitview-status button {
+    color: var(--text-link);
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+.vc-splitview-composer-wrap {
+    flex: 0 0 auto;
+    padding: 0 16px 8px;
+    background: transparent;
+}
+
+.vc-splitview-composer-target {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--vc-splitview-native-composer-border-color, var(--vc-splitview-input-border));
+    border-bottom: 0;
+    border-radius: 8px 8px 0 0;
+    color: var(--vc-splitview-text-secondary);
+    background: var(--vc-splitview-native-composer-background-color, var(--vc-splitview-input-background));
+    font-size: 12px;
+}
+
+.vc-splitview-composer-target > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.vc-splitview-composer-target strong,
+.vc-splitview-composer-target span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vc-splitview-composer-target strong {
+    color: var(--vc-splitview-text-primary);
+    font-weight: 600;
+}
+
+.vc-splitview-composer-target button {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    color: var(--interactive-normal);
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+    font-size: 20px;
+    line-height: 1;
+}
+
+.vc-splitview-composer-target button:hover {
+    color: var(--interactive-hover);
+    background: var(--background-modifier-hover);
+}
+
+.vc-splitview-composer {
+    display: flex;
+    align-items: flex-start;
+    box-sizing: border-box;
+    gap: 6px;
+    min-height: var(--vc-splitview-native-composer-min-height, 56px);
+    padding: 8px 4px 8px 12px;
+    border-color: var(--vc-splitview-native-composer-border-color, var(--vc-splitview-input-border));
+    border-radius: var(--vc-splitview-native-composer-border-radius, 8px);
+    border-style: var(--vc-splitview-native-composer-border-style, solid);
+    border-width: var(--vc-splitview-native-composer-border-width, 1px);
+    background-color: var(--vc-splitview-native-composer-background-color, var(--vc-splitview-input-background));
+    background-image: var(--vc-splitview-native-composer-background-image, none);
+    background-position: var(--vc-splitview-native-composer-background-position, initial);
+    background-repeat: var(--vc-splitview-native-composer-background-repeat, initial);
+    background-size: var(--vc-splitview-native-composer-background-size, initial);
+    box-shadow: var(--vc-splitview-native-composer-box-shadow, none);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.vc-splitview-composer-target + .vc-splitview-composer {
+    border-radius: 0 0 var(--vc-splitview-native-composer-border-radius, 8px) var(--vc-splitview-native-composer-border-radius, 8px);
+}
+
+.vc-splitview-attachments {
+    box-sizing: border-box;
+    overflow: hidden;
+    border-color: var(--vc-splitview-native-composer-border-color, var(--vc-splitview-input-border));
+    border-radius: var(--vc-splitview-native-composer-border-radius, 8px) var(--vc-splitview-native-composer-border-radius, 8px) 0 0;
+    border-style: var(--vc-splitview-native-composer-border-style, solid);
+    border-width: var(--vc-splitview-native-composer-border-width, 1px);
+    border-bottom: 0;
+    background-color: var(--vc-splitview-native-composer-background-color, var(--vc-splitview-input-background));
+}
+
+.vc-splitview-attachment-list {
+    display: flex;
+    box-sizing: border-box;
+    gap: 24px;
+    width: 100%;
+    margin: 0;
+    padding: 20px 30px 10px 10px;
+    overflow-x: auto;
+    list-style: none;
+    scrollbar-color: var(--scrollbar-thin-thumb) var(--scrollbar-thin-track);
+    scrollbar-width: thin;
+}
+
+.vc-splitview-composer-target + .vc-splitview-attachments {
+    border-radius: 0;
+}
+
+.vc-splitview-composer-with-attachments {
+    border-radius: 0 0 var(--vc-splitview-native-composer-border-radius, 8px) var(--vc-splitview-native-composer-border-radius, 8px);
+    border-top: 0;
+}
+
+.vc-splitview-file-input {
+    display: none;
+}
+
+.vc-splitview-composer-action {
+    display: grid;
+    flex: 0 0 36px;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    margin: 2px 0;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    opacity: 0.75;
+    color: var(--interactive-normal);
+    background: transparent;
+    cursor: pointer;
+}
+
+.vc-splitview-composer-action:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.vc-splitview-composer-action:hover:not(:disabled),
+.vc-splitview-composer-action-selected {
+    opacity: 1;
+    color: var(--interactive-hover);
+    background: var(--background-modifier-hover);
+}
+
+.vc-splitview-gif-picker {
+    --custom-gif-picker-gutter-size: 12px 16px;
+
+    width: min(420px, calc(100vw - 32px));
+    height: min(440px, calc(100vh - 96px));
+    overflow: hidden;
+    border-radius: 8px;
+    background: var(--background-floating);
+    box-shadow: var(--elevation-high);
+}
+
+.vc-splitview-gif-picker > * {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+}
+
+.vc-splitview-composer textarea {
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 38px;
+    height: 38px;
+    max-height: 160px;
+    overflow: hidden auto;
+    scrollbar-width: none;
+    resize: none;
+    padding: 9px 4px;
+    border: 0;
+    outline: 0;
+    color: var(--vc-splitview-text-primary);
+    background: transparent;
+    font: inherit;
+    line-height: 20px;
+}
+
+.vc-splitview-composer textarea::-webkit-scrollbar {
+    display: none;
+}
+
+.vc-splitview-composer textarea::placeholder {
+    color: var(--vc-splitview-text-secondary);
+    opacity: 0.85;
+}
+
+.vc-splitview-composer textarea:read-only {
+    cursor: wait;
+}
+
+.vc-splitview-composer textarea:disabled {
+    cursor: not-allowed;
+}
+
+.vc-splitview-send-button {
+    display: grid;
+    flex: 0 0 36px;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    margin: 2px 0;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    color: var(--white-500);
+    background: var(--brand-500);
+    cursor: pointer;
+    font: inherit;
+    font-weight: 600;
+}
+
+.vc-splitview-send-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.vc-splitview-send-button:hover:not(:disabled) {
+    background: var(--brand-560, var(--brand-500));
+}
+
+.vc-splitview-send-button svg {
+    width: 18px;
+    height: 18px;
+}
+
+.vc-splitview-send-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid color-mix(in srgb, currentcolor 35%, transparent);
+    border-top-color: currentcolor;
+    border-radius: 50%;
+    animation: vc-splitview-spin 700ms linear infinite;
+}
+
+.vc-splitview-composer-status {
+    padding: 5px 4px 0;
+    color: var(--vc-splitview-text-secondary);
+    font-size: 11px;
+}
+
+.vc-splitview-divider {
+    position: absolute;
+    z-index: 2;
+    background: transparent;
+    pointer-events: auto;
+    touch-action: none;
+    transform: translate(-50%, -50%);
+}
+
+.vc-splitview-divider-vertical {
+    width: 7px;
+    transform: translate(-50%, 0);
+    cursor: col-resize;
+}
+
+.vc-splitview-divider-horizontal {
+    height: 7px;
+    transform: translate(0, -50%);
+    cursor: row-resize;
+}
+
+.vc-splitview-divider::after {
+    position: absolute;
+    background: var(--vc-splitview-border);
+    content: "";
+    transition: inset 100ms ease, background 100ms ease;
+}
+
+.vc-splitview-divider-vertical::after {
+    inset: 0 3px;
+}
+
+.vc-splitview-divider-horizontal::after {
+    inset: 3px 0;
+}
+
+.vc-splitview-divider-vertical:hover::after,
+.vc-splitview-divider-vertical.vc-splitview-divider-dragging::after {
+    inset: 0 2px;
+    background: var(--brand-500);
+}
+
+.vc-splitview-divider-horizontal:hover::after,
+.vc-splitview-divider-horizontal.vc-splitview-divider-dragging::after {
+    inset: 2px 0;
+    background: var(--brand-500);
+}
+
+.vc-splitview-tab:focus-visible,
+.vc-splitview-tab-scroll-button:focus-visible,
+.vc-splitview-close-split-button:focus-visible,
+.vc-splitview-open-primary-button:focus-visible,
+.vc-splitview-load-earlier:focus-visible,
+.vc-splitview-status button:focus-visible,
+.vc-splitview-composer button:focus-visible,
+.vc-splitview-attachments button:focus-visible,
+.vc-splitview-divider:focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: -2px;
+}
+
+.vc-splitview-tab .vc-splitview-tab-close:focus-visible {
+    outline: 2px solid var(--brand-500);
+    outline-offset: -2px;
+}
+
+.vc-splitview-drag-layer {
+    position: fixed;
+    z-index: 10000;
+    inset: 0;
+    overflow: hidden;
+    cursor: grabbing;
+    pointer-events: none;
+    user-select: none;
+}
+
+.vc-splitview-drop-target {
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: 20px;
+    border: 2px dashed color-mix(in srgb, var(--brand-500) 65%, transparent);
+    border-radius: 14px;
+    opacity: 0.68;
+    color: var(--text-default);
+    background: color-mix(in srgb, var(--brand-500) 12%, var(--vc-splitview-surface, var(--background-primary)));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-500) 8%, transparent);
+    text-align: center;
+    transform: scale(0.985);
+    transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.vc-splitview-drop-target-active {
+    border-style: solid;
+    opacity: 1;
+    background: color-mix(in srgb, var(--brand-500) 22%, var(--vc-splitview-surface, var(--background-primary)));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-500) 30%, transparent), var(--elevation-high);
+    transform: scale(1);
+}
+
+.vc-splitview-drop-target-icon {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 10px;
+    border-radius: 12px;
+    color: var(--brand-360, var(--text-link));
+    background: color-mix(in srgb, var(--brand-500) 18%, transparent);
+}
+
+.vc-splitview-drop-target-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+.vc-splitview-drop-target-title {
+    color: var(--text-default);
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.vc-splitview-drop-target-hint {
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.vc-splitview-drag-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: 260px;
+    padding: 8px 11px;
+    border: 1px solid var(--vc-splitview-border);
+    border-radius: 10px;
+    color: var(--text-normal);
+    background: var(--background-floating);
+    box-shadow: var(--elevation-high);
+    will-change: transform;
+}
+
+.vc-splitview-drag-ghost-icon,
+.vc-splitview-drag-ghost-fallback {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+}
+
+.vc-splitview-drag-ghost-icon {
+    object-fit: cover;
+}
+
+.vc-splitview-drag-ghost-fallback {
+    display: grid;
+    place-items: center;
+    color: var(--interactive-normal);
+    background: var(--background-modifier-selected);
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.vc-splitview-drag-ghost-text {
+    min-width: 0;
+}
+
+.vc-splitview-drag-ghost-title,
+.vc-splitview-drag-ghost-subtitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vc-splitview-drag-ghost-title {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.vc-splitview-drag-ghost-subtitle {
+    margin-top: 1px;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+@keyframes vc-splitview-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .vc-splitview-active-pane-outline,
+    .vc-splitview-composer,
+    .vc-splitview-divider::after,
+    .vc-splitview-drop-target {
+        transition: none;
+    }
+
+    .vc-splitview-send-spinner {
+        animation-duration: 1.4s;
+    }
+}
