@@ -28,6 +28,22 @@ type DropTarget = {
     rect: PreviewRect;
 };
 
+function samePreviewRect(first: PreviewRect, second: PreviewRect): boolean {
+    return first.height === second.height
+        && first.left === second.left
+        && first.top === second.top
+        && first.width === second.width;
+}
+
+function sameDropTarget(first: DropTarget | null, second: DropTarget | null): boolean {
+    if (first === second) return true;
+    if (!first || !second || first.kind !== second.kind || first.paneId !== second.paneId || !samePreviewRect(first.rect, second.rect)) return false;
+    if (first.kind === "pane" || second.kind === "pane") return true;
+    return first.marker === second.marker
+        && first.placement === second.placement
+        && first.tabId === second.tabId;
+}
+
 let dragSource: DragSource | null = null;
 
 export function beginWorkspaceDrag(event: ReactDragEvent<HTMLElement>, source: DragSource): void {
@@ -53,8 +69,11 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
         const host = hostRef.current;
         if (!host) return;
         let focusFrame: number | undefined;
+        let dragFrame: number | undefined;
+        let pendingDragOver: { target: EventTarget | null; x: number; y: number; } | undefined;
+        let dropAllowed = false;
 
-        function getDropTarget(event: globalThis.DragEvent, source: DragSource): DropTarget | null {
+        function getDropTarget(x: number, y: number, eventTarget: EventTarget | null, source: DragSource): DropTarget | null {
             const sourcePane = getPaneState(source.paneId);
             if (!sourcePane || (source.kind === "tab" && !sourcePane.tabs.some(tab => tab.id === source.tabId))) return null;
             const workspace = host!.getBoundingClientRect();
@@ -68,22 +87,22 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
                     width: rect.width * workspace.width,
                     height: rect.height * workspace.height
                 }
-            })).find(({ rect }) => event.clientX >= rect.left && event.clientX < rect.left + rect.width
-                && event.clientY >= rect.top && event.clientY < rect.top + rect.height);
+            })).find(({ rect }) => x >= rect.left && x < rect.left + rect.width
+                && y >= rect.top && y < rect.top + rect.height);
             if (!leaf) return null;
             if (source.kind === "pane") {
                 return leaf.paneId === source.paneId ? null : { kind: "pane", ...leaf };
             }
             if (!canMoveTab(leaf.paneId, source.tabId)) return null;
 
-            const targetElement = event.target instanceof Element
-                ? event.target.closest<HTMLElement>("[data-vc-splitview-tab-id]")
+            const targetElement = eventTarget instanceof Element
+                ? eventTarget.closest<HTMLElement>("[data-vc-splitview-tab-id]")
                 : null;
             const tabId = targetElement?.dataset.vcSplitviewTabId;
             if (tabId && getPaneState(leaf.paneId)?.tabs.some(tab => tab.id === tabId)) {
                 if (tabId === source.tabId) return null;
                 const rect = targetElement!.getBoundingClientRect();
-                const placement = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
+                const placement = x < rect.left + rect.width / 2 ? "before" : "after";
                 return {
                     kind: "tab", paneId: leaf.paneId, tabId, placement, marker: true,
                     rect: { top: rect.top, height: rect.height, left: (placement === "before" ? rect.left : rect.right) - 2, width: 4 }
@@ -94,14 +113,28 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
 
         function onDragOver(event: globalThis.DragEvent): void {
             if (!dragSource || !event.dataTransfer?.types.includes(WORKSPACE_DRAG_TYPE)) return;
-            const target = getDropTarget(event, dragSource);
             event.preventDefault();
             event.stopPropagation();
-            event.dataTransfer.dropEffect = target ? "move" : "none";
-            setPreview(target);
+            event.dataTransfer.dropEffect = dropAllowed ? "move" : "none";
+            pendingDragOver = { target: event.target, x: event.clientX, y: event.clientY };
+            if (dragFrame != null) return;
+            dragFrame = requestAnimationFrame(() => {
+                dragFrame = undefined;
+                const pending = pendingDragOver;
+                pendingDragOver = undefined;
+                const source = dragSource;
+                if (!pending || !source) return;
+                const target = getDropTarget(pending.x, pending.y, pending.target, source);
+                dropAllowed = target != null;
+                setPreview(current => sameDropTarget(current, target) ? current : target);
+            });
         }
 
         function clearDrag(): void {
+            if (dragFrame != null) cancelAnimationFrame(dragFrame);
+            dragFrame = undefined;
+            pendingDragOver = undefined;
+            dropAllowed = false;
             dragSource = null;
             setPreview(null);
         }
@@ -109,7 +142,7 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
         function onDrop(event: globalThis.DragEvent): void {
             const source = dragSource;
             if (!source || !event.dataTransfer?.types.includes(WORKSPACE_DRAG_TYPE)) return;
-            const target = getDropTarget(event, source);
+            const target = getDropTarget(event.clientX, event.clientY, event.target, source);
             event.preventDefault();
             event.stopPropagation();
             clearDrag();
@@ -130,7 +163,13 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
         }
 
         function onDragLeave(event: globalThis.DragEvent): void {
-            if (!(event.relatedTarget instanceof Node) || !host!.contains(event.relatedTarget)) setPreview(null);
+            if (!(event.relatedTarget instanceof Node) || !host!.contains(event.relatedTarget)) {
+                if (dragFrame != null) cancelAnimationFrame(dragFrame);
+                dragFrame = undefined;
+                pendingDragOver = undefined;
+                dropAllowed = false;
+                setPreview(null);
+            }
         }
 
         function onKeyDown(event: globalThis.KeyboardEvent): void {
@@ -147,6 +186,7 @@ export function WorkspaceDragLayer({ hostRef, geometry }: {
         return () => {
             dragSource = null;
             if (focusFrame != null) cancelAnimationFrame(focusFrame);
+            if (dragFrame != null) cancelAnimationFrame(dragFrame);
             host.removeEventListener("dragover", onDragOver, true);
             host.removeEventListener("drop", onDrop, true);
             host.removeEventListener("dragleave", onDragLeave);

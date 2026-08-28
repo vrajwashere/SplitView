@@ -59,6 +59,10 @@ export function registerSplitComposer(paneId: string, composer: HTMLTextAreaElem
     else splitComposers.delete(paneId);
 }
 
+export function unregisterSplitComposer(paneId: string, composer: HTMLTextAreaElement): void {
+    if (splitComposers.get(paneId) === composer) splitComposers.delete(paneId);
+}
+
 export function focusSplitComposer(paneId = getLayoutState().activePaneId): boolean {
     const composer = paneId ? splitComposers.get(paneId) : undefined;
     if (!composer?.isConnected || composer.disabled) return false;
@@ -127,6 +131,15 @@ function activatePane(paneId: string | null): void {
     else if (!focusSplitComposer(paneId)) focusPaneContainer(paneId);
 }
 
+function isPluginNavigationShortcut(event: globalThis.KeyboardEvent): boolean {
+    if (!event.ctrlKey || event.metaKey) return false;
+    if (!event.altKey && !event.shiftKey) return event.key === "ArrowLeft" || event.key === "ArrowRight";
+    if (!event.altKey && event.shiftKey) {
+        return event.code === "Space" || ["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key);
+    }
+    return event.altKey && !event.shiftKey && /^Digit[0-4]$/.test(event.code);
+}
+
 export function ComposerShortcuts({ geometry }: { geometry: PaneShortcutGeometry; }) {
     const geometryRef = React.useRef(geometry);
     geometryRef.current = geometry;
@@ -136,6 +149,13 @@ export function ComposerShortcuts({ geometry }: { geometry: PaneShortcutGeometry
 
         function onKeyDown(event: globalThis.KeyboardEvent): void {
             if (event.defaultPrevented || event.isComposing) return;
+            if (event.repeat && isPluginNavigationShortcut(event)) {
+                // A held shortcut can otherwise enqueue native routes or mount
+                // split channel trees at the operating system's repeat rate.
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                return;
+            }
             if (event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
                 // Capture before the native editor consumes Ctrl+Arrow to move the caret.
                 // Scope to the workspace so dialogs and the sidebar keep their shortcuts.
@@ -156,8 +176,8 @@ export function ComposerShortcuts({ geometry }: { geometry: PaneShortcutGeometry
                 const nextTab = pane.tabs[(index + offset + pane.tabs.length) % pane.tabs.length];
                 event.preventDefault();
                 event.stopImmediatePropagation();
-                // Keep repeat key events on a stable element while navigation
-                // replaces the native editor or the split's controlled textarea.
+                // Keep focus on a stable element while navigation replaces the
+                // native editor or changes the split's controlled textarea.
                 focusPaneContainer(paneId);
                 activateTab(paneId, nextTab.id);
 
@@ -179,7 +199,7 @@ export function ComposerShortcuts({ geometry }: { geometry: PaneShortcutGeometry
                 });
                 return;
             }
-            if (event.repeat || event.metaKey) return;
+            if (event.metaKey) return;
 
             let handled = false;
             const targets = orderedTargets(geometryRef.current);

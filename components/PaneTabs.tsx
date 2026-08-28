@@ -8,6 +8,7 @@ import { ChannelStore, GuildStore, React, UserStore, useStateFromStores } from "
 import type { ComponentType, DragEvent, KeyboardEvent, MouseEvent } from "react";
 
 import { getChannel, getChannelHeaderDetails } from "../discord/channel";
+import { prewarmChannelMessages } from "../discord/messages";
 import { beginWorkspaceDrag } from "../drag/WorkspaceDrag";
 import { settings } from "../settings";
 import { activateTab, closePane, closeTab, keepPrimaryTab, MAXIMUM_TABS_PER_PANE, openPrimaryTab, usePaneState } from "../state/layoutStore";
@@ -23,15 +24,40 @@ interface PaneTabButtonProps {
 
 function PaneTabButton({ paneId, tab, active, preview, canClose }: PaneTabButtonProps) {
     const [dragging, setDragging] = React.useState(false);
-    const channel = useStateFromStores(
+    const prewarmTimerRef = React.useRef<number | undefined>(undefined);
+    const details = useStateFromStores(
         [ChannelStore, GuildStore, UserStore],
-        () => getChannel(tab.channelId),
-        [tab.channelId]
+        () => {
+            const channel = getChannel(tab.channelId);
+            return channel ? getChannelHeaderDetails(channel) : undefined;
+        },
+        [tab.channelId],
+        (previous, next) => previous?.title === next?.title
+            && previous?.subtitle === next?.subtitle
+            && previous?.iconUrl === next?.iconUrl
     );
 
-    if (!channel) return null;
+    function cancelPrewarm() {
+        if (prewarmTimerRef.current != null) clearTimeout(prewarmTimerRef.current);
+        prewarmTimerRef.current = undefined;
+    }
 
-    const details = getChannelHeaderDetails(channel);
+    function prewarmSoon() {
+        if (active || prewarmTimerRef.current != null) return;
+        prewarmTimerRef.current = window.setTimeout(() => {
+            prewarmTimerRef.current = undefined;
+            prewarmChannelMessages(tab.channelId);
+        }, 75);
+    }
+
+    function prewarmNow() {
+        cancelPrewarm();
+        if (!active) prewarmChannelMessages(tab.channelId);
+    }
+
+    React.useEffect(() => cancelPrewarm, []);
+
+    if (!details) return null;
 
     function close(event: MouseEvent) {
         event.preventDefault();
@@ -54,6 +80,10 @@ function PaneTabButton({ paneId, tab, active, preview, canClose }: PaneTabButton
             draggable
             title={`${details.subtitle ? `${details.title} — ${details.subtitle}` : details.title}${preview ? " — Preview: click + to keep this tab before browsing elsewhere" : ""}`}
             onClick={() => activateTab(paneId, tab.id)}
+            onFocus={prewarmNow}
+            onPointerDown={prewarmNow}
+            onPointerEnter={prewarmSoon}
+            onPointerLeave={cancelPrewarm}
             onDoubleClick={() => {
                 if (preview) keepPrimaryTab();
             }}
@@ -164,6 +194,20 @@ export function PaneTabs({ paneId }: { paneId: string | null; }) {
     React.useLayoutEffect(() => {
         revealActiveTabRef.current?.();
     }, [pane?.activeTabId]);
+
+    React.useEffect(() => {
+        if (paneId != null || !pane?.activeTabId || pane.tabs.length < 2) return;
+        const activeIndex = pane.tabs.findIndex(tab => tab.id === pane.activeTabId);
+        if (activeIndex < 0) return;
+        const neighborIds = new Set([
+            pane.tabs[(activeIndex - 1 + pane.tabs.length) % pane.tabs.length].channelId,
+            pane.tabs[(activeIndex + 1) % pane.tabs.length].channelId
+        ]);
+        const timer = setTimeout(() => {
+            for (const channelId of neighborIds) prewarmChannelMessages(channelId);
+        }, 350);
+        return () => clearTimeout(timer);
+    }, [pane?.activeTabId, pane?.tabs, paneId]);
 
     if (!pane) return null;
 

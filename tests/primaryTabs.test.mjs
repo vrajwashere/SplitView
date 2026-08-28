@@ -285,7 +285,7 @@ test("main pane handle swaps positions without changing tabs or the native route
     await h.layout.initializeLayout();
     h.layout.openChannel("split");
     const target = Object.values(h.layout.getLayoutState().panes)[0];
-    const primary = h.primary;
+    const { primary } = h;
     assert.equal(h.layout.swapPanePositions(null, target.id), true);
     assert.equal(h.layout.getLayoutState().layout.first.paneId, target.id);
     assert.equal(h.primary, primary);

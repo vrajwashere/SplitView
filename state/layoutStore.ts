@@ -32,9 +32,12 @@ let state = createDefaultState();
 let drafts: Record<string, string> = {};
 const stagedDrafts = new Map<string, string>();
 const draftRecency = new Map<string, true>();
+const draftRevisions = new Map<string, number>();
+let liveSplitChannelIds = new Set<string>();
 let initialized = false;
 
 const MAXIMUM_RETAINED_DRAFTS = 500;
+export const MAXIMUM_DRAFT_LENGTH = 100_000;
 export const MAXIMUM_TABS_PER_PANE = 100;
 
 function toPersistedState(value: SplitViewState): PersistedSplitState {
@@ -43,12 +46,20 @@ function toPersistedState(value: SplitViewState): PersistedSplitState {
 }
 
 function publish(nextState: SplitViewState, persist = true): void {
+    if (!state.hydrated && !nextState.hydrated) return;
+    if (nextState.panes !== state.panes) {
+        liveSplitChannelIds = new Set(Object.values(nextState.panes).map(pane => pane.channelId));
+    }
     state = nextState;
     for (const listener of listeners) listener();
 
-    if (persist && settings.store.rememberLayout) {
+    if (persist && state.hydrated && settings.store.rememberLayout) {
         schedulePersistedState(toPersistedState(state));
     }
+}
+
+function bumpDraftRevision(channelId: string): void {
+    draftRevisions.set(channelId, (draftRevisions.get(channelId) ?? 0) + 1);
 }
 
 function makeId(prefix: string): string {
@@ -217,6 +228,10 @@ export function getLayoutState(): SplitViewState {
     return state;
 }
 
+export function isLiveSplitChannel(channelId: string): boolean {
+    return liveSplitChannelIds.has(channelId);
+}
+
 export function subscribeLayout(listener: Listener): () => void {
     listeners.add(listener);
     return () => listeners.delete(listener);
@@ -265,6 +280,8 @@ export async function initializeLayout(): Promise<void> {
 
     const { drafts: restoredDrafts = {}, ...restoredState } = restored ?? {};
     drafts = restoredDrafts;
+    stagedDrafts.clear();
+    draftRevisions.clear();
     draftRecency.clear();
     for (const channelId of Object.keys(drafts)) draftRecency.set(channelId, true);
 
@@ -331,6 +348,7 @@ export function openPrimaryTab(channelId: string): boolean {
 }
 
 export function openChannel(channelId: string): boolean {
+    if (!state.hydrated || !isChannelAvailable(channelId)) return false;
     if (activateExistingChannel(channelId)) return true;
 
     const paneIds = collectPaneIds(state.layout);
@@ -352,12 +370,14 @@ export function openChannel(channelId: string): boolean {
 }
 
 export function openChannelInPane(channelId: string, paneId: string | null): boolean {
+    if (!state.hydrated || !isChannelAvailable(channelId)) return false;
     if (paneId == null) return openPrimaryTab(channelId);
     if (activateExistingChannel(channelId)) return true;
     return addChannelTab(paneId, channelId) || openChannel(channelId);
 }
 
 export function splitChannel(channelId: string, targetPaneId: string | null, placement: SplitPlacement): boolean {
+    if (!state.hydrated || !isChannelAvailable(channelId)) return false;
     if (activateExistingChannel(channelId)) return true;
 
     const paneIds = collectPaneIds(state.layout);
@@ -406,7 +426,7 @@ export function activateTab(paneId: string | null, tabId: string): void {
             publish({ ...state, primary: { ...state.primary, activeTabId: tabId }, activePaneId: null });
         }
         // Never render a split message list or composer for the primary pane.
-        openAsPrimary(tab.channelId);
+        if (SelectedChannelStore.getChannelId() !== tab.channelId) openAsPrimary(tab.channelId);
         return;
     }
     if (pane.activeTabId === tabId && state.activePaneId === paneId) return;
@@ -646,16 +666,23 @@ export function getDraft(channelId: string): string {
     return stagedDrafts.has(channelId) ? stagedDrafts.get(channelId)! : drafts[channelId] ?? "";
 }
 
+export function getDraftRevision(channelId: string): number {
+    return draftRevisions.get(channelId) ?? 0;
+}
+
 /** Stage a keystroke-only update without notifying React or scheduling storage. */
 export function stageDraft(channelId: string, draft: string): void {
-    stagedDrafts.set(channelId, draft);
+    if (!state.hydrated) return;
+    const boundedDraft = draft.slice(0, MAXIMUM_DRAFT_LENGTH);
+    if (getDraft(channelId) !== boundedDraft) bumpDraftRevision(channelId);
+    stagedDrafts.set(channelId, boundedDraft);
 }
 
 export function commitStagedDraft(channelId: string): void {
     if (!stagedDrafts.has(channelId)) return;
     const draft = stagedDrafts.get(channelId)!;
     stagedDrafts.delete(channelId);
-    setDraft(channelId, draft);
+    setDraftValue(channelId, draft, false);
 }
 
 export function flushStagedDrafts(): void {
@@ -663,10 +690,18 @@ export function flushStagedDrafts(): void {
 }
 
 export function setDraft(channelId: string, draft: string): void {
+    setDraftValue(channelId, draft, true);
+}
+
+function setDraftValue(channelId: string, draft: string, revise: boolean): void {
+    if (!state.hydrated) return;
+    const boundedDraft = draft.slice(0, MAXIMUM_DRAFT_LENGTH);
+    const previousDraft = getDraft(channelId);
     stagedDrafts.delete(channelId);
-    if (drafts[channelId] === draft) return;
-    if (draft) {
-        drafts[channelId] = draft;
+    if (drafts[channelId] === boundedDraft) return;
+    if (revise && previousDraft !== boundedDraft) bumpDraftRevision(channelId);
+    if (boundedDraft) {
+        drafts[channelId] = boundedDraft;
         draftRecency.delete(channelId);
         draftRecency.set(channelId, true);
     } else {
@@ -680,9 +715,15 @@ export function setDraft(channelId: string, draft: string): void {
         delete drafts[oldestChannelId];
     }
 
-    if (settings.store.rememberLayout) {
+    if (state.hydrated && settings.store.rememberLayout) {
         schedulePersistedState(toPersistedState(state));
     }
+}
+
+export function clearDraftAtRevision(channelId: string, revision: number): boolean {
+    if (getDraftRevision(channelId) !== revision) return false;
+    setDraft(channelId, "");
+    return true;
 }
 
 export function pruneUnavailableChannels(isAvailable: (channelId: string) => boolean): void {
@@ -727,7 +768,7 @@ export function pruneUnavailableChannels(isAvailable: (channelId: string) => boo
 }
 
 export function flushLayoutPersistence(): Promise<void> {
-    if (!settings.store.rememberLayout) {
+    if (!state.hydrated || !settings.store.rememberLayout) {
         cancelScheduledPersistedState();
         return Promise.resolve();
     }

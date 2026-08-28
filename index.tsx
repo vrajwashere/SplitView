@@ -16,7 +16,7 @@ import { syncLiveMessages } from "./discord/messages";
 import { getChannelDragProps } from "./drag/DragManager";
 import { logger } from "./logger";
 import { settings } from "./settings";
-import { closeAllPanes, equalizeViewSizes, flushLayoutPersistence, flushStagedDrafts, getLayoutState, initializeLayout, openChannel, openPrimaryTab, pruneUnavailableChannels, syncPrimaryChannel } from "./state/layoutStore";
+import { closeAllPanes, equalizeViewSizes, flushLayoutPersistence, flushStagedDrafts, initializeLayout, isLiveSplitChannel, openChannel, openPrimaryTab, pruneUnavailableChannels, syncPrimaryChannel } from "./state/layoutStore";
 import { clearMessageViewportStates } from "./state/messageViewportStore";
 import managedStyle from "./styles.css?managed";
 
@@ -80,8 +80,7 @@ function pruneRestoredLayout(): void {
 }
 
 function isSplitViewChannel(channelId: string): boolean {
-    return Object.values(getLayoutState().panes)
-        .some(pane => pane.tabs.some(tab => tab.channelId === channelId));
+    return isLiveSplitChannel(channelId);
 }
 
 export default definePlugin({

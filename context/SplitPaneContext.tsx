@@ -13,6 +13,7 @@ export type SplitComposerTarget =
     | null;
 
 export interface SplitPaneContextValue {
+    active: boolean;
     paneId: string;
     channelId: string;
     guildId?: string;

@@ -190,11 +190,14 @@ export function migratePersistedState(value: unknown): PersistedSplitState | nul
     }
 
     const draftEntries = Object.entries(value.drafts);
-    if (draftEntries.length > MAXIMUM_DRAFT_COUNT || draftEntries.some(([channelId, draft]) => !isIdentifier(channelId) || typeof draft !== "string" || draft.length > MAXIMUM_DRAFT_LENGTH)) {
+    if (draftEntries.length > MAXIMUM_DRAFT_COUNT || draftEntries.some(([channelId, draft]) => !isIdentifier(channelId) || typeof draft !== "string")) {
         logger.warn("Ignoring a saved layout with malformed drafts");
         return null;
     }
-    const drafts = Object.fromEntries(draftEntries) as Record<string, string>;
+    const drafts = Object.fromEntries(draftEntries.map(([channelId, draft]) => [
+        channelId,
+        (draft as string).slice(0, MAXIMUM_DRAFT_LENGTH)
+    ])) as Record<string, string>;
 
     const activePaneId = typeof value.activePaneId === "string" && panes[value.activePaneId]
         ? value.activePaneId

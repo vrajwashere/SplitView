@@ -5,6 +5,7 @@
  */
 
 import { PlusIcon } from "@components/Icons";
+import type { CloudUpload } from "@vencord/discord-types";
 import { ChannelStore, DraftType, GuildStore, MessageStore, PermissionStore, Popout, React, UploadAttachmentStore, UploadHandler, UploadManager, useEffect, useLayoutEffect, useRef, UserStore, useState, useStateFromStores } from "@webpack/common";
 import type { ChangeEvent, ClipboardEvent, ComponentType, DragEvent, KeyboardEvent } from "react";
 
@@ -13,32 +14,39 @@ import { getChannel, getChannelHeaderDetails } from "../discord/channel";
 import { getSendAvailability } from "../discord/permissions";
 import { editPaneMessage, sendPaneMessage, sendPaneReply } from "../discord/send";
 import { type NativeGif, NativeGifPicker, NativeUpload, useNativeGifIcon } from "../discord/webpack";
-import { registerSplitComposer } from "../keyboard/ComposerFocusManager";
+import { registerSplitComposer, unregisterSplitComposer } from "../keyboard/ComposerFocusManager";
 import { logger } from "../logger";
-import { commitStagedDraft, getDraft, setActivePane, setDraft, stageDraft } from "../state/layoutStore";
+import { clearDraftAtRevision, commitStagedDraft, getDraft, getDraftRevision, getLayoutState, MAXIMUM_DRAFT_LENGTH, setActivePane, stageDraft } from "../state/layoutStore";
 
 const DRAFT_SYNC_DELAY_MS = 250;
 
-function restoreTextareaFocus(textarea: HTMLTextAreaElement | null): void {
+function restoreTextareaFocus(textarea: HTMLTextAreaElement | null, paneId: string, channelId: string): void {
     // Discord may focus its native composer after SEND_MESSAGE finishes. Waiting
     // for two paint frames lets that work settle before restoring this pane's
     // independent caret.
     requestAnimationFrame(() => requestAnimationFrame(() => {
         if (!textarea?.isConnected || textarea.disabled) return;
+        const layout = getLayoutState();
+        if (layout.activePaneId !== paneId || layout.panes[paneId]?.channelId !== channelId) return;
         textarea.focus({ preventScroll: true });
         const caret = textarea.value.length;
         textarea.setSelectionRange(caret, caret);
     }));
 }
 
+function uploadsAreIdentical(first: readonly CloudUpload[], second: readonly CloudUpload[]): boolean {
+    return first.length === second.length && first.every((upload, index) => upload === second[index]);
+}
+
 export function SplitComposer() {
-    const { paneId, channelId } = useSplitPane();
+    const { active = true, paneId, channelId } = useSplitPane();
     const { composerTarget, setComposerTarget } = useSplitComposerState();
     const [draft, setLocalDraft] = useState(() => getDraft(channelId));
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const gifButtonRef = useRef<HTMLButtonElement>(null);
     const draftRef = useRef(draft);
+    const sendingRef = useRef(false);
     const [editContent, setEditContent] = useState("");
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState<string>();
@@ -54,7 +62,8 @@ export function SplitComposer() {
     const uploads = useStateFromStores(
         [UploadAttachmentStore],
         () => [...UploadAttachmentStore.getUploads(channelId, DraftType.ChannelMessage)],
-        [channelId]
+        [channelId],
+        uploadsAreIdentical
     );
     const targetMessage = useStateFromStores(
         [MessageStore],
@@ -81,11 +90,14 @@ export function SplitComposer() {
         [channelId]
     );
     const setTextareaRef = React.useCallback((textarea: HTMLTextAreaElement | null) => {
+        const previous = textareaRef.current;
         textareaRef.current = textarea;
-        // The ref owns registration and cleanup. A passive unmount cleanup can
-        // run after the next tab's ref attaches and unregister its composer.
-        registerSplitComposer(paneId, textarea);
-    }, [paneId]);
+        if (textarea) {
+            if (active) registerSplitComposer(paneId, textarea);
+        } else if (previous) {
+            unregisterSplitComposer(paneId, previous);
+        }
+    }, [active, paneId]);
 
     draftRef.current = draft;
 
@@ -119,44 +131,57 @@ export function SplitComposer() {
 
     async function submit(contentOverride?: string) {
         const content = contentOverride ?? value;
-        const uploads = editing
+        const submittedUploads = editing
             ? []
             : [...UploadAttachmentStore.getUploads(channelId, DraftType.ChannelMessage)];
-        if ((!content.trim() && uploads.length === 0) || !availability.canSend || sending) return;
+        if ((!content.trim() && submittedUploads.length === 0) || !availability.canSend || sendingRef.current) return;
 
         const textarea = textareaRef.current;
+        const submittedDraftRevision = getDraftRevision(channelId);
+        const submittedTarget = composerTarget;
+        sendingRef.current = true;
         setSending(true);
         setSendError(undefined);
         try {
-            if (composerTarget?.kind === "edit") {
-                await editPaneMessage(channelId, composerTarget.messageId, content);
-                setComposerTarget(null);
-            } else if (composerTarget?.kind === "reply" && channel && targetMessage) {
+            if (submittedTarget?.kind === "edit") {
+                await editPaneMessage(channelId, submittedTarget.messageId, content);
+                setComposerTarget(current => current === submittedTarget ? null : current);
+            } else if (submittedTarget?.kind === "reply" && channel && targetMessage) {
                 await sendPaneReply(
                     channel,
                     targetMessage,
                     content,
                     targetMessage.author.id !== currentUserId,
-                    uploads
+                    submittedUploads
                 );
-                if (uploads.length > 0) UploadManager.clearAll(channelId, DraftType.ChannelMessage);
-                setLocalDraft("");
-                setDraft(channelId, "");
-                setComposerTarget(null);
+                clearSubmittedPayload();
+                setComposerTarget(current => current === submittedTarget ? null : current);
             } else {
-                await sendPaneMessage(channelId, content, uploads);
-                if (uploads.length > 0) UploadManager.clearAll(channelId, DraftType.ChannelMessage);
-                setLocalDraft("");
-                setDraft(channelId, "");
+                await sendPaneMessage(channelId, content, submittedUploads);
+                clearSubmittedPayload();
             }
         } catch (error) {
-            logger.error("Failed to submit a message", { channelId, composerTarget, error });
+            logger.error("Failed to submit a message", { channelId, composerTarget: submittedTarget, error });
             setSendError(editing
                 ? "Message failed to update. Your edit was kept."
                 : "Message failed to send. Your draft was kept.");
         } finally {
+            sendingRef.current = false;
             setSending(false);
-            restoreTextareaFocus(textarea);
+            restoreTextareaFocus(textarea, paneId, channelId);
+        }
+
+        function clearSubmittedPayload(): void {
+            if (submittedUploads.length > 0) {
+                const currentUploads = UploadAttachmentStore.getUploads(channelId, DraftType.ChannelMessage);
+                if (uploadsAreIdentical(submittedUploads, currentUploads)) {
+                    UploadManager.clearAll(channelId, DraftType.ChannelMessage);
+                }
+            }
+
+            if (contentOverride == null && clearDraftAtRevision(channelId, submittedDraftRevision)) {
+                setLocalDraft(current => current === content ? "" : current);
+            }
         }
     }
 
@@ -288,6 +313,7 @@ export function SplitComposer() {
                     ref={setTextareaRef}
                     value={value}
                     rows={1}
+                    maxLength={MAXIMUM_DRAFT_LENGTH}
                     aria-label={`Message ${channelTitle}`}
                     aria-busy={sending}
                     aria-keyshortcuts="Control+ArrowLeft Control+ArrowRight Control+Shift+Space Control+Shift+ArrowLeft Control+Shift+ArrowRight Control+Shift+ArrowUp Control+Shift+ArrowDown"

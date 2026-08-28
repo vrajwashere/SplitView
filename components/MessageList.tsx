@@ -113,7 +113,7 @@ function getNativeMessageGroupMargin(configuredSpacing: number): string {
     return `${(Number.isFinite(configuredSpacing) ? configuredSpacing : 16) + 1}px`;
 }
 
-export function MessageList({ viewportKey }: { viewportKey: string; }) {
+export function MessageList({ active: viewActive, viewportKey }: { active: boolean; viewportKey: string; }) {
     const pane = useSplitPane();
     const { channelId } = pane;
     const paneActive = useIsPaneActive(pane.paneId);
@@ -223,6 +223,7 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
     );
 
     useEffect(() => {
+        if (!viewActive) return;
         const cached = MessageStore.getMessages(channelId);
         if (restoredViewport && cached.ready && cached.hasFetched
             && (cached._array.length >= INITIAL_MESSAGE_COUNT || !cached.hasMoreBefore)) {
@@ -241,20 +242,20 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
         return () => {
             disposed = true;
         };
-    }, [channelId, restoredViewport]);
+    }, [channelId, restoredViewport, viewActive]);
 
     useEffect(() => {
         // Discord expires background channel caches even though this channel is
         // still visible in SplitView. Restore it as soon as that happens so the
         // native store can continue accepting ordinary MESSAGE_CREATE events.
-        if (initialLoadPending || snapshot.loading || snapshot.ready) return;
+        if (!viewActive || initialLoadPending || snapshot.loading || snapshot.ready) return;
         void ensureMessages(channelId).catch(error => {
             logger.error("Failed to recover expired message cache", { channelId, error });
         });
-    }, [channelId, initialLoadPending, snapshot.loading, snapshot.ready]);
+    }, [channelId, initialLoadPending, snapshot.loading, snapshot.ready, viewActive]);
 
     useEffect(() => {
-        if (initialLoadPending || !observedLastMessageId) return;
+        if (!viewActive || initialLoadPending || !observedLastMessageId) return;
         void syncLiveMessages(channelId, observedLastMessageId).catch(error => {
             logger.error("Failed to reconcile split channel with read state", {
                 channelId,
@@ -262,7 +263,7 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
                 error
             });
         });
-    }, [channelId, initialLoadPending, observedLastMessageId]);
+    }, [channelId, initialLoadPending, observedLastMessageId, viewActive]);
 
     useLayoutEffect(() => {
         setVisibleLimit(limit => Math.min(limit, maximumRenderedMessages));
@@ -272,7 +273,7 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
 
     useLayoutEffect(() => () => {
         const scroller = scrollerRef.current;
-        if (scroller) rememberViewport(scroller);
+        if (scroller && scroller.clientHeight > 0) rememberViewport(scroller);
         if (viewportFrameRef.current != null) cancelAnimationFrame(viewportFrameRef.current);
         viewportFrameRef.current = undefined;
     }, [viewportKey, visibleLimit]);
@@ -280,7 +281,7 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
     useEffect(() => {
         const scroller = scrollerRef.current;
         const messageList = messageListRef.current;
-        if (!scroller || !messageList || initialLoadPending || typeof ResizeObserver === "undefined") return;
+        if (!viewActive || !scroller || !messageList || initialLoadPending || typeof ResizeObserver === "undefined") return;
 
         let animationFrame: number | undefined;
         const refreshViewport = () => {
@@ -305,11 +306,11 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
             observer.disconnect();
             if (animationFrame != null) cancelAnimationFrame(animationFrame);
         };
-    }, [channelId, compact, initialLoadPending]);
+    }, [channelId, compact, initialLoadPending, viewActive]);
 
     useLayoutEffect(() => {
         const scroller = scrollerRef.current;
-        if (!scroller || initialLoadPending) return;
+        if (!viewActive || !scroller || initialLoadPending) return;
 
         if (previousScrollHeightRef.current != null) {
             scroller.scrollTop += scroller.scrollHeight - previousScrollHeightRef.current;
@@ -323,7 +324,7 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
             scroller.scrollTop = scroller.scrollHeight;
         }
         updateViewport(scroller);
-    }, [channelId, initialLoadPending, measurementVersion, paneActive, snapshot.hasMoreBefore, snapshot.messages.length, snapshot.messages.at(0)?.id, snapshot.messages.at(-1)?.id, visibleLimit]);
+    }, [channelId, initialLoadPending, measurementVersion, paneActive, snapshot.hasMoreBefore, snapshot.messages.length, snapshot.messages.at(0)?.id, snapshot.messages.at(-1)?.id, viewActive, visibleLimit]);
 
     const channel = getChannel(channelId);
     const visibleMessages = React.useMemo(
@@ -366,6 +367,9 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
         ? Math.min(visibleMessages.length, lowerBound(offsets, relativeScrollTop + viewport.height + MESSAGE_OVERSCAN_PX) + 1)
         : visibleMessages.length;
     const renderedMessages = visibleMessages.slice(startIndex, endIndex);
+    const visibleMessageCount = Math.min(visibleLimit, snapshot.messages.length);
+    const canLoadEarlier = visibleLimit < snapshot.messages.length
+        || snapshot.hasMoreBefore && visibleMessageCount < maximumRenderedMessages;
 
     useLayoutEffect(() => {
         if (measuredCompactRef.current === compact) return;
@@ -383,7 +387,7 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
     }, [channelId, maximumRenderedMessages, visibleMessages.at(0)?.id, visibleMessages.at(-1)?.id, visibleMessages.length]);
 
     useLayoutEffect(() => {
-        if (typeof ResizeObserver === "undefined") return;
+        if (!viewActive || typeof ResizeObserver === "undefined") return;
         const observer = new ResizeObserver(entries => {
             let changed = false;
             for (const entry of entries) {
@@ -401,16 +405,27 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
             observer.disconnect();
             rowObserverRef.current = undefined;
         };
-    }, [channelId]);
+    }, [channelId, viewActive]);
 
     async function loadEarlier() {
         if (historyRequestRef.current) return;
         const scroller = scrollerRef.current;
         if (scroller) previousScrollHeightRef.current = scroller.scrollHeight;
         historyRequestRef.current = true;
-        setVisibleLimit(limit => Math.min(limit + 50, maximumRenderedMessages));
         try {
-            await fetchOlderMessages(channelId);
+            if (visibleLimitRef.current < snapshot.messages.length) {
+                setVisibleLimit(limit => Math.min(limit + 50, maximumRenderedMessages));
+            } else {
+                await fetchOlderMessages(channelId);
+                const cachedMessageCount = Math.min(
+                    MessageStore.getMessages(channelId)._array.length,
+                    maximumRenderedMessages
+                );
+                setVisibleLimit(limit => Math.min(
+                    maximumRenderedMessages,
+                    Math.max(limit, Math.min(cachedMessageCount, limit + 50))
+                ));
+            }
         } catch (error) {
             logger.error("Failed to fetch earlier messages", { channelId, error });
         } finally {
@@ -419,7 +434,7 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
             // have had two paint frames to settle, then release the anchor.
             requestAnimationFrame(() => requestAnimationFrame(() => {
                 const currentScroller = scrollerRef.current;
-                if (currentScroller && previousScrollHeightRef.current != null) {
+                if (currentScroller?.clientHeight && previousScrollHeightRef.current != null) {
                     currentScroller.scrollTop += currentScroller.scrollHeight - previousScrollHeightRef.current;
                     updateViewport(currentScroller);
                 }
@@ -445,7 +460,7 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
                 scheduleViewportUpdate(element);
             }}
         >
-            {!initialLoadPending && snapshot.hasMoreBefore && (
+            {!initialLoadPending && canLoadEarlier && (
                 <button
                     type="button"
                     className="vc-splitview-load-earlier"
@@ -461,7 +476,11 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
             {!initialLoadPending && snapshot.error && !snapshot.messages.length && (
                 <div className="vc-splitview-status vc-splitview-status-error">
                     Messages could not be loaded.
-                    <button type="button" onClick={() => void ensureMessages(channelId)}>Retry</button>
+                    <button type="button" onClick={() => {
+                        void ensureMessages(channelId).catch(error => {
+                            logger.error("Failed to retry loading messages", { channelId, error });
+                        });
+                    }}>Retry</button>
                 </div>
             )}
             {!initialLoadPending && snapshot.ready && !snapshot.messages.length && !snapshot.loading && (
@@ -495,10 +514,10 @@ export function MessageList({ viewportKey }: { viewportKey: string; }) {
     );
 }
 
-let memoizedMessageList: ComponentType<{ viewportKey: string; }> | undefined;
+let memoizedMessageList: ComponentType<{ active: boolean; viewportKey: string; }> | undefined;
 
 /** Skip unrelated parent renders; pane activation refreshes the viewport internally. */
-export function StableMessageList(props: { viewportKey: string; }) {
+export function StableMessageList(props: { active: boolean; viewportKey: string; }) {
     const MemoizedMessageList = memoizedMessageList ??= React.memo(MessageList);
     return <MemoizedMessageList {...props} />;
 }

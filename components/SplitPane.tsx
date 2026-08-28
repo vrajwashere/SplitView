@@ -12,24 +12,31 @@ import { SplitComposerTarget, SplitPaneProvider } from "../context/SplitPaneCont
 import { getChannel, isSupportedMessageChannel } from "../discord/channel";
 import { usePaneFocusRef } from "../keyboard/ComposerFocusManager";
 import { closeTab, getLayoutState, setActivePane, useIsPaneActive, usePaneState } from "../state/layoutStore";
-import type { SplitPaneRecord } from "../state/types";
 import { StableMessageList } from "./MessageList";
 import { StablePaneTabs } from "./PaneTabs";
 import { StableSplitComposer } from "./SplitComposer";
 
+const MAXIMUM_WARM_TABS_PER_PANE = 2;
+
 interface SplitChannelPaneProps {
     active: boolean;
     channel: Channel;
-    pane: SplitPaneRecord;
     paneId: string;
+    tabId: string;
 }
 
 interface SplitPaneProps {
     paneId: string;
 }
 
-function SplitChannelPane({ active, channel, pane, paneId }: SplitChannelPaneProps) {
-    const paneFocusRef = usePaneFocusRef(paneId);
+interface CachedSplitChannelProps {
+    active: boolean;
+    channelId: string;
+    paneId: string;
+    tabId: string;
+}
+
+function SplitChannelPane({ active, channel, paneId, tabId }: SplitChannelPaneProps) {
     const [composerTarget, setComposerTarget] = useState<SplitComposerTarget>(null);
     const beginReply = React.useCallback((messageId: string) => {
         setComposerTarget({ kind: "reply", messageId });
@@ -41,13 +48,14 @@ function SplitChannelPane({ active, channel, pane, paneId }: SplitChannelPanePro
         setComposerTarget(current => current?.messageId === messageId ? null : current);
     }, []);
     const context = React.useMemo(() => ({
+        active,
         paneId,
         channelId: channel.id,
         guildId: channel.guild_id || undefined,
         beginReply,
         beginEdit,
         clearComposerTargetForMessage
-    }), [beginEdit, beginReply, channel.guild_id, channel.id, clearComposerTargetForMessage, paneId]);
+    }), [active, beginEdit, beginReply, channel.guild_id, channel.id, clearComposerTargetForMessage, paneId]);
     const composerContext = React.useMemo(() => ({
         composerTarget,
         setComposerTarget
@@ -56,6 +64,52 @@ function SplitChannelPane({ active, channel, pane, paneId }: SplitChannelPanePro
     React.useLayoutEffect(() => {
         setComposerTarget(null);
     }, [channel.id]);
+
+    return (
+        <SplitPaneProvider value={context} composerValue={composerContext}>
+            <div className="vc-splitview-channel-view" hidden={!active}>
+                <StableMessageList active={active} viewportKey={tabId} />
+                <StableSplitComposer />
+            </div>
+        </SplitPaneProvider>
+    );
+}
+
+function CachedSplitChannel({ active, channelId, paneId, tabId }: CachedSplitChannelProps) {
+    const channel = useStateFromStores(
+        [ChannelStore],
+        () => getChannel(channelId),
+        [channelId]
+    );
+
+    if (!isSupportedMessageChannel(channel)) {
+        return active
+            ? <div className="vc-splitview-status vc-splitview-status-error">SplitView cannot render this channel.</div>
+            : null;
+    }
+
+    return <SplitChannelPane active={active} channel={channel} paneId={paneId} tabId={tabId} />;
+}
+
+export function SplitPane({ paneId }: SplitPaneProps) {
+    const pane = usePaneState(paneId);
+    const active = useIsPaneActive(paneId);
+    const paneFocusRef = usePaneFocusRef(paneId);
+    const cachedTabIdsRef = React.useRef<string[]>([]);
+    const activeChannel = useStateFromStores(
+        [ChannelStore],
+        () => pane ? getChannel(pane.channelId) : undefined,
+        [pane?.channelId]
+    );
+
+    if (!pane) return null;
+
+    const availableTabIds = new Set(pane.tabs.map(tab => tab.id));
+    const cachedTabIds = [
+        pane.activeTabId,
+        ...cachedTabIdsRef.current.filter(tabId => tabId !== pane.activeTabId && availableTabIds.has(tabId))
+    ].slice(0, MAXIMUM_WARM_TABS_PER_PANE);
+    cachedTabIdsRef.current = cachedTabIds;
 
     function onKeyDown(event: KeyboardEvent<HTMLElement>) {
         if (!event.ctrlKey || event.altKey || event.metaKey) return;
@@ -67,50 +121,35 @@ function SplitChannelPane({ active, channel, pane, paneId }: SplitChannelPanePro
             event.preventDefault();
             event.stopPropagation();
             closeTab(paneId, currentPane.activeTabId);
-            return;
         }
     }
 
     return (
-        <SplitPaneProvider value={context} composerValue={composerContext}>
-            <section
-                ref={paneFocusRef}
-                tabIndex={-1}
-                className={`vc-splitview-pane${active ? " vc-splitview-pane-active" : ""}`}
-                aria-label={`Split view for ${channel.name || "direct message"}`}
-                onPointerDown={() => setActivePane(paneId)}
-                onFocusCapture={() => setActivePane(paneId)}
-                onKeyDown={onKeyDown}
-            >
-                <StablePaneTabs paneId={paneId} />
-                <StableMessageList key={pane.activeTabId} viewportKey={pane.activeTabId} />
-                <StableSplitComposer key={channel.id} />
-            </section>
-        </SplitPaneProvider>
-    );
-}
-
-export function SplitPane({ paneId }: SplitPaneProps) {
-    const pane = usePaneState(paneId);
-    const active = useIsPaneActive(paneId);
-    const channel = useStateFromStores(
-        [ChannelStore],
-        () => pane ? getChannel(pane.channelId) : undefined,
-        [pane?.channelId]
-    );
-
-    if (!pane) return null;
-    if (!isSupportedMessageChannel(channel)) {
-        return <div className="vc-splitview-status vc-splitview-status-error">SplitView cannot render this channel.</div>;
-    }
-
-    return (
-        <SplitChannelPane
-            active={active}
-            channel={channel}
-            pane={pane}
-            paneId={paneId}
-        />
+        <section
+            ref={paneFocusRef}
+            tabIndex={-1}
+            className={`vc-splitview-pane${active ? " vc-splitview-pane-active" : ""}`}
+            aria-label={`Split view for ${activeChannel?.name || "direct message"}`}
+            onPointerDown={() => setActivePane(paneId)}
+            onFocusCapture={() => setActivePane(paneId)}
+            onKeyDown={onKeyDown}
+        >
+            <StablePaneTabs paneId={paneId} />
+            <div className="vc-splitview-channel-stack">
+                {cachedTabIds.map(tabId => {
+                    const tab = pane.tabs.find(candidate => candidate.id === tabId);
+                    return tab && (
+                        <CachedSplitChannel
+                            key={tab.id}
+                            active={tab.id === pane.activeTabId}
+                            channelId={tab.channelId}
+                            paneId={paneId}
+                            tabId={tab.id}
+                        />
+                    );
+                })}
+            </div>
+        </section>
     );
 }
 

@@ -9,6 +9,8 @@ import { ChannelActionCreators, ChannelStore, MessageActions, MessageStore } fro
 import { logger } from "../logger";
 
 const PAGE_SIZE = 50;
+const PREWARM_CACHE_LIMIT = 32;
+const PREWARM_TTL_MS = 60_000;
 export const INITIAL_MESSAGE_COUNT = 50;
 
 interface FetchMessagesOptions {
@@ -31,6 +33,7 @@ const inFlightRequests = new Map<string, Promise<void>>();
 const initialLoadRequests = new Map<string, Promise<void>>();
 const liveSyncRequests = new Map<string, Promise<void>>();
 const liveSyncTargets = new Map<string, string>();
+const prewarmedChannels = new Map<string, number>();
 
 function compareMessageIds(first: string, second: string): number {
     try {
@@ -70,6 +73,20 @@ export function ensureMessages(channelId: string): Promise<void> {
         .finally(() => initialLoadRequests.delete(channelId));
     initialLoadRequests.set(channelId, request);
     return request;
+}
+
+/** Warm a likely tab target once per minute without retaining an unbounded cache. */
+export function prewarmChannelMessages(channelId: string): void {
+    const now = Date.now();
+    const previousWarmTime = prewarmedChannels.get(channelId);
+    if (previousWarmTime != null && now - previousWarmTime < PREWARM_TTL_MS) return;
+
+    prewarmedChannels.delete(channelId);
+    prewarmedChannels.set(channelId, now);
+    while (prewarmedChannels.size > PREWARM_CACHE_LIMIT) {
+        prewarmedChannels.delete(prewarmedChannels.keys().next().value!);
+    }
+    void ensureMessages(channelId).catch(() => undefined);
 }
 
 async function loadInitialMessages(channelId: string): Promise<void> {
