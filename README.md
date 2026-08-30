@@ -9,6 +9,8 @@ A Vencord user plugin that opens multiple Discord conversations in resizable pan
 - Use tabs inside secondary panes and resize each split.
 - Reorder tabs, move them between split panes, and swap whole views with their tabs.
 - Send messages, replies, files, images, and GIFs.
+- Autocomplete mentions and emoji with Discord's native suggestions.
+- Browse Discord's native emoji picker, including favorites and skin tones.
 - Browse Discord's native GIF picker, including saved GIFs.
 - Keep independent drafts and restore saved layouts.
 

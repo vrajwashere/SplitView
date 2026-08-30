@@ -5,20 +5,33 @@
  */
 
 import { PlusIcon } from "@components/Icons";
-import type { CloudUpload } from "@vencord/discord-types";
-import { ChannelStore, DraftType, GuildStore, MessageStore, PermissionStore, Popout, React, UploadAttachmentStore, UploadHandler, UploadManager, useEffect, useLayoutEffect, useRef, UserStore, useState, useStateFromStores } from "@webpack/common";
+import type { CloudUpload, Emoji } from "@vencord/discord-types";
+import { EmojiIntention } from "@vencord/discord-types/enums";
+import { ChannelStore, DraftType, EmojiStore, GuildStore, MessageStore, PermissionsBits, PermissionStore, Popout, React, UploadAttachmentStore, UploadHandler, UploadManager, useEffect, useLayoutEffect, useRef, UserStore, useState, useStateFromStores } from "@webpack/common";
 import type { ChangeEvent, ClipboardEvent, ComponentType, DragEvent, KeyboardEvent } from "react";
 
 import { useSplitComposerState, useSplitPane } from "../context/SplitPaneContext";
 import { getChannel, getChannelHeaderDetails } from "../discord/channel";
+import { getComposerWord, replaceComposerRange } from "../discord/composerText";
 import { getSendAvailability } from "../discord/permissions";
 import { editPaneMessage, sendPaneMessage, sendPaneReply } from "../discord/send";
-import { type NativeGif, NativeGifPicker, NativeUpload, useNativeGifIcon } from "../discord/webpack";
+import { NativeAutocomplete, type NativeAutocompleteEditor, type NativeAutocompleteHandle, NativeEmojiButton, NativeEmojiPicker, type NativeEmojiPickerSelection, type NativeGif, NativeGifPicker, NativeUpload, useNativeGifIcon } from "../discord/webpack";
 import { registerSplitComposer, unregisterSplitComposer } from "../keyboard/ComposerFocusManager";
 import { logger } from "../logger";
 import { clearDraftAtRevision, commitStagedDraft, getDraft, getDraftRevision, getLayoutState, MAXIMUM_DRAFT_LENGTH, setActivePane, stageDraft } from "../state/layoutStore";
 
 const DRAFT_SYNC_DELAY_MS = 250;
+const SPLIT_CHAT_INPUT_TYPE = {
+    autocomplete: {
+        addReactionShortcut: false,
+        alwaysUseLayer: false,
+        forceChatLayer: false,
+        small: false
+    },
+    commands: { enabled: false },
+    expressionPicker: { emojiIntention: EmojiIntention.CHAT },
+    users: { allowMentioning: true }
+};
 
 function restoreTextareaFocus(textarea: HTMLTextAreaElement | null, paneId: string, channelId: string): void {
     // Discord may focus its native composer after SEND_MESSAGE finishes. Waiting
@@ -45,12 +58,20 @@ export function SplitComposer() {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const gifButtonRef = useRef<HTMLButtonElement>(null);
+    const emojiButtonRef = useRef<HTMLElement>(null);
+    const autocompleteRef = useRef<NativeAutocompleteHandle>(null);
+    const autocompleteEditorRef = useRef<NativeAutocompleteEditor>(null);
+    const composerSelectionRef = useRef({ start: draft.length, end: draft.length });
     const draftRef = useRef(draft);
+    const composerValueRef = useRef(draft);
     const sendingRef = useRef(false);
     const [editContent, setEditContent] = useState("");
     const [sending, setSending] = useState(false);
     const [sendError, setSendError] = useState<string>();
+    const [composerFocused, setComposerFocused] = useState(false);
+    const [autocompleteVisible, setAutocompleteVisible] = useState(false);
     const [fileInputVersion, setFileInputVersion] = useState(0);
+    const channel = getChannel(channelId);
     const availability = useStateFromStores(
         [ChannelStore, PermissionStore],
         () => getSendAvailability(getChannel(channelId)),
@@ -58,6 +79,17 @@ export function SplitComposer() {
         (previous, next) => previous.canAttachFiles === next.canAttachFiles
             && previous.canSend === next.canSend
             && previous.reason === next.reason
+    );
+    const canMentionEveryone = useStateFromStores(
+        [ChannelStore, PermissionStore],
+        () => {
+            const currentChannel = getChannel(channelId);
+            return Boolean(currentChannel && (
+                currentChannel.isPrivate()
+                || PermissionStore.can(PermissionsBits.MENTION_EVERYONE, currentChannel)
+            ));
+        },
+        [channelId]
     );
     const uploads = useStateFromStores(
         [UploadAttachmentStore],
@@ -80,7 +112,6 @@ export function SplitComposer() {
     const hasPayload = hasContent || hasUploads;
     const unchangedEdit = editing && targetMessage?.content === editContent;
     const canSubmit = availability.canSend && hasPayload && !unchangedEdit && !sending;
-    const channel = getChannel(channelId);
     const channelTitle = useStateFromStores(
         [ChannelStore, GuildStore, UserStore],
         () => {
@@ -100,6 +131,20 @@ export function SplitComposer() {
     }, [active, paneId]);
 
     draftRef.current = draft;
+    composerValueRef.current = value;
+    autocompleteEditorRef.current = {
+        getCurrentWord() {
+            const selection = readComposerSelection();
+            const word = getComposerWord(composerValueRef.current, selection.start, selection.end);
+            return { word: word.word, isAtStart: word.isAtStart };
+        },
+        getSlateEditor() {
+            return null;
+        },
+        insertAutocomplete(displayText, rawText) {
+            insertAutocompleteText(displayText, rawText);
+        }
+    };
 
     useEffect(() => {
         const timer = setTimeout(() => commitStagedDraft(channelId), DRAFT_SYNC_DELAY_MS);
@@ -126,8 +171,87 @@ export function SplitComposer() {
         if (!textarea) return;
         textarea.focus({ preventScroll: true });
         const caret = textarea.value.length;
+        composerSelectionRef.current = { start: caret, end: caret };
         textarea.setSelectionRange(caret, caret);
     }, [composerTarget]);
+
+    function readComposerSelection(): { start: number; end: number; } {
+        const textarea = textareaRef.current;
+        if (!textarea) return composerSelectionRef.current;
+        return {
+            start: textarea.selectionStart ?? composerSelectionRef.current.start,
+            end: textarea.selectionEnd ?? composerSelectionRef.current.end
+        };
+    }
+
+    function rememberComposerSelection(textarea: HTMLTextAreaElement): void {
+        composerSelectionRef.current = {
+            start: textarea.selectionStart ?? 0,
+            end: textarea.selectionEnd ?? textarea.selectionStart ?? 0
+        };
+    }
+
+    function updateComposerValue(nextValue: string): void {
+        composerValueRef.current = nextValue;
+        if (editing) setEditContent(nextValue);
+        else updateDraft(nextValue);
+    }
+
+    function applyComposerInsertion(start: number, end: number, text: string, addTrailingSpace: boolean): void {
+        const replacement = replaceComposerRange(composerValueRef.current, start, end, text, addTrailingSpace);
+        if (replacement.value.length > MAXIMUM_DRAFT_LENGTH) {
+            setSendError(`Messages can contain at most ${MAXIMUM_DRAFT_LENGTH.toLocaleString()} characters.`);
+            return;
+        }
+
+        setSendError(undefined);
+        composerSelectionRef.current = { start: replacement.caret, end: replacement.caret };
+        updateComposerValue(replacement.value);
+        requestAnimationFrame(() => {
+            const textarea = textareaRef.current;
+            if (!textarea?.isConnected || textarea.disabled) return;
+            textarea.focus({ preventScroll: true });
+            textarea.setSelectionRange(replacement.caret, replacement.caret);
+        });
+    }
+
+    function formatEmoji(emoji: Emoji): string {
+        const name = (emoji.originalName ?? emoji.name).replaceAll(":", "");
+        if (emoji.id) return `<${emoji.animated ? "a" : ""}:${name}:${emoji.id}>`;
+        if ("optionallyDiverseSequence" in emoji) {
+            return emoji.optionallyDiverseSequence ?? emoji.surrogates;
+        }
+        return `:${name}:`;
+    }
+
+    function resolveAutocompleteText(displayText: string, rawText?: string): string {
+        const text = rawText ?? displayText;
+        const emojiAlias = /^:([^:]+):$/.exec(text);
+        if (!emojiAlias) return text;
+
+        const emoji = EmojiStore
+            .getDisambiguatedEmojiContext(channel?.guild_id)
+            .getByName(emojiAlias[1]);
+        return emoji ? formatEmoji(emoji) : text;
+    }
+
+    function insertAutocompleteText(displayText: string, rawText?: string): void {
+        const selection = readComposerSelection();
+        const word = getComposerWord(composerValueRef.current, selection.start, selection.end);
+        applyComposerInsertion(word.start, word.end, resolveAutocompleteText(displayText, rawText), true);
+    }
+
+    function insertSelectedEmoji(selection: NativeEmojiPickerSelection, closePopout: () => void): void {
+        if (!selection.emoji) return;
+        const currentSelection = readComposerSelection();
+        applyComposerInsertion(
+            currentSelection.start,
+            currentSelection.end,
+            formatEmoji(selection.emoji),
+            selection.willClose
+        );
+        if (selection.willClose) closePopout();
+    }
 
     async function submit(contentOverride?: string) {
         const content = contentOverride ?? value;
@@ -230,13 +354,45 @@ export function SplitComposer() {
     }
 
     function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+        const autocomplete = autocompleteRef.current;
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Escape" && autocomplete?.isVisible()) {
+            event.preventDefault();
+            event.stopPropagation();
+            autocomplete.onHideAutocomplete();
+            return;
+        }
+        if (!event.altKey && !event.ctrlKey && !event.metaKey) {
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                if (autocomplete?.onMoveSelection(event.key === "ArrowUp" ? -1 : 1)) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+            }
+            if (event.key === "Tab" && !event.shiftKey && autocomplete?.onTabOrEnter(false)) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+            if (event.key === "Enter" && !event.shiftKey && autocomplete?.onTabOrEnter(true)) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+            if (event.key === " " && autocomplete?.onSpace()) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+        }
         if (event.key === "Escape" && composerTarget) {
             event.preventDefault();
             event.stopPropagation();
             setComposerTarget(null);
             return;
         }
-        if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+        if (event.key !== "Enter" || event.shiftKey) return;
         event.preventDefault();
         event.stopPropagation();
         void submit();
@@ -250,6 +406,31 @@ export function SplitComposer() {
 
     return (
         <div className="vc-splitview-composer-wrap">
+            {channel && (
+                <NativeAutocomplete
+                    ref={autocompleteRef}
+                    channel={channel}
+                    type={SPLIT_CHAT_INPUT_TYPE}
+                    editorHeight={textareaRef.current?.clientHeight ?? 40}
+                    editorRef={autocompleteEditorRef}
+                    targetRef={textareaRef}
+                    textValue={value}
+                    focused={composerFocused && !sending && availability.canSend}
+                    expressionPickerView={null}
+                    position="top"
+                    barsHeight={0}
+                    canMentionUsers
+                    canMentionRoles={Boolean(channel.guild_id)}
+                    canMentionChannels={Boolean(channel.guild_id)}
+                    canMentionEveryone={canMentionEveryone}
+                    canOnlyUseTextCommands
+                    canSendStickers={false}
+                    canSendSoundmoji={false}
+                    useNewSlashCommands={false}
+                    setValue={updateComposerValue}
+                    onVisibilityChange={setAutocompleteVisible}
+                />
+            )}
             {composerTarget && targetMessage && (
                 <div className="vc-splitview-composer-target">
                     <div>
@@ -316,19 +497,63 @@ export function SplitComposer() {
                     maxLength={MAXIMUM_DRAFT_LENGTH}
                     aria-label={`Message ${channelTitle}`}
                     aria-busy={sending}
+                    aria-autocomplete="list"
+                    aria-expanded={autocompleteVisible}
                     aria-keyshortcuts="Control+ArrowLeft Control+ArrowRight Control+Shift+Space Control+Shift+ArrowLeft Control+Shift+ArrowRight Control+Shift+ArrowUp Control+Shift+ArrowDown"
                     placeholder={availability.canSend ? (editing ? "Edit message" : `Message ${channelTitle}`) : availability.reason}
                     data-splitview-composer="true"
                     disabled={!availability.canSend}
                     readOnly={sending}
-                    onChange={event => editing
-                        ? setEditContent(event.currentTarget.value)
-                        : updateDraft(event.currentTarget.value)
-                    }
-                    onFocus={() => setActivePane(paneId)}
+                    onChange={event => {
+                        rememberComposerSelection(event.currentTarget);
+                        updateComposerValue(event.currentTarget.value);
+                    }}
+                    onFocus={() => {
+                        setComposerFocused(true);
+                        setActivePane(paneId);
+                    }}
+                    onBlur={() => setComposerFocused(false)}
+                    onSelect={event => {
+                        rememberComposerSelection(event.currentTarget);
+                        autocompleteRef.current?.onMaybeShowAutocomplete();
+                    }}
                     onKeyDown={onKeyDown}
                     onPaste={onPaste}
                 />
+                <Popout
+                    position="top"
+                    align="right"
+                    animation={Popout.Animation.NONE}
+                    spacing={8}
+                    targetElementRef={emojiButtonRef}
+                    renderPopout={({ closePopout }) => channel && (
+                        <NativeEmojiPicker
+                            channel={channel}
+                            persistSearch
+                            pickerIntention={EmojiIntention.CHAT}
+                            closePopout={closePopout}
+                            onNavigateAway={closePopout}
+                            onSelectEmoji={selection => insertSelectedEmoji(selection, closePopout)}
+                        />
+                    )}
+                >
+                    {(popoutProps, { isShown }) => (
+                        <NativeEmojiButton
+                            {...popoutProps}
+                            ref={emojiButtonRef}
+                            active={isShown}
+                            className="vc-splitview-composer-action vc-splitview-emoji-button"
+                            disabled={!availability.canSend || sending}
+                            aria-label="Open emoji picker"
+                            tooltipText="Open emoji picker"
+                            title="Open emoji picker"
+                            onClick={event => {
+                                autocompleteRef.current?.onHideAutocomplete();
+                                popoutProps.onClick(event);
+                            }}
+                        />
+                    )}
+                </Popout>
                 {!editing && (
                     <Popout
                         position="top"
